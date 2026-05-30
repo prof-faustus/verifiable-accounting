@@ -1,0 +1,24 @@
+[package]
+name = "vaa-simstore"
+description = "Proof-store storage and retrieval efficiency study: measures sharded vs baseline bytes and timings over a deterministic synthetic leaf population."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "vaa-simstore"
+path = "src/main.rs"
+
+[dependencies]
+vaa-bsv = { path = "../bsv" }
+vaa-merkle = { path = "../merkle" }
+vaa-proofstore = { path = "../proofstore" }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }

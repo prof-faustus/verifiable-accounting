@@ -1,0 +1,32 @@
+[package]
+name = "vaa-commit"
+description = "Pedersen commitments on secp256k1 via libsecp256k1-zkp (Blockstream). Binding + hiding. Used by the ZK accounting-arithmetic layer."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+secp256k1-zkp = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true, optional = true }
+
+[features]
+# `serde` is on by default so the serde-round-trip security tests run under
+# the bare `cargo test --workspace` gate. Consumers that need a no-serde
+# build can opt out with `default-features = false`.
+default = ["serde"]
+serde = ["dep:serde", "secp256k1-zkp/serde"]
+
+[dev-dependencies]
+hex = { workspace = true }
+proptest = { workspace = true }
+serde_json = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "commit_benches"
+harness = false

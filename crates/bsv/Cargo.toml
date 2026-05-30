@@ -1,0 +1,22 @@
+[package]
+name = "vaa-bsv"
+description = "BSV (Bitcoin SV) primitive types, hashing, transaction/script model, and SPV header-chain glue for the Verifiable Accounting Arithmetic reference implementation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sha2 = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true, optional = true }
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+[dev-dependencies]
+hex-literal = { workspace = true }

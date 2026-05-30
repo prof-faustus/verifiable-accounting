@@ -1,0 +1,27 @@
+[package]
+name = "vaa-simstudy"
+description = "Synthetic-population study: receivables roll-forward over committed values, with injected faults and detection counts. The E3 + E6 study."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "vaa-simstudy"
+path = "src/main.rs"
+
+[dependencies]
+vaa-bsv = { path = "../bsv" }
+vaa-merkle = { path = "../merkle" }
+vaa-proofstore = { path = "../proofstore" }
+vaa-commit = { path = "../commit" }
+vaa-zk = { path = "../zk" }
+vaa-accounting = { path = "../accounting" }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }

@@ -1,0 +1,73 @@
+{
+  "collusive_false_origin": {
+    "detected": 0,
+    "false_positives_clean": 0,
+    "injected": 1,
+    "missed": 1,
+    "name": "collusive_false_origin"
+  },
+  "faults": [
+    {
+      "detected": 1,
+      "false_positives_clean": 0,
+      "injected": 1,
+      "missed": 0,
+      "name": "altered_value"
+    },
+    {
+      "detected": 1,
+      "false_positives_clean": 0,
+      "injected": 1,
+      "missed": 0,
+      "name": "omitted_movement"
+    },
+    {
+      "detected": 1,
+      "false_positives_clean": 0,
+      "injected": 1,
+      "missed": 0,
+      "name": "duplicated_movement"
+    },
+    {
+      "detected": 1,
+      "false_positives_clean": 0,
+      "injected": 1,
+      "missed": 0,
+      "name": "out_of_range_value"
+    },
+    {
+      "detected": 1,
+      "false_positives_clean": 0,
+      "injected": 1,
+      "missed": 0,
+      "name": "tampered_merkle_leaf"
+    },
+    {
+      "detected": 1,
+      "false_positives_clean": 0,
+      "injected": 1,
+      "missed": 0,
+      "name": "wrong_index"
+    }
+  ],
+  "inclusion_passed": 64,
+  "inclusion_sample": 64,
+  "note": "Timings are host-dependent (crypto-core/local) and omitted from the committed vector.",
+  "population": {
+    "ar_close": 167379609,
+    "ar_open": 23108957,
+    "credit_notes_count": 20,
+    "credit_notes_total": 6827228,
+    "invoices_count": 100,
+    "invoices_total": 462772106,
+    "m_movements": 200,
+    "receipts_count": 70,
+    "receipts_total": 309218700,
+    "write_offs_count": 10,
+    "write_offs_total": 2455526
+  },
+  "range_passed": 32,
+  "range_sample": 32,
+  "roll_forward_holds": true,
+  "seed": 2026053002
+}

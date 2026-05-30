@@ -1,0 +1,17 @@
+{
+  "vector_id": "merkle.genesis.v1",
+  "source": "Bitcoin / BSV genesis block (height 0). The single-transaction block whose Merkle root equals the coinbase txid. Used to document the single-leaf root convention and the internal↔display byte-order conversion.",
+  "leaves_internal_le": [
+    "3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a"
+  ],
+  "coinbase_txid_display_be": "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b",
+  "expected_root_internal_le": "3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a",
+  "expected_root_display_be": "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b",
+  "proofs": [
+    {
+      "leaf_index": 0,
+      "siblings_internal_le": []
+    }
+  ],
+  "notes": "BSV/Bitcoin convention: when a block has a single transaction, the block Merkle root equals that transaction's txid. The single-leaf proof has zero siblings; verification consists of asserting leaf == root. Internal byte order is the order in which the bytes are concatenated for hashing; display byte order (block-explorer hex) is the byte-reverse."
+}

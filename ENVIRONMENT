@@ -1,0 +1,42 @@
+ENVIRONMENT — Verifiable Accounting Arithmetic reference implementation
+
+TOOLCHAIN
+  rust: 1.85.0 (pinned via rust-toolchain.toml)
+  cargo: bundled with the pinned rustc
+  target triples tested: x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, aarch64-apple-darwin
+
+KEY DEPENDENCIES
+  Versions below state the workspace minimum; exact resolved versions live in Cargo.lock.
+
+  Cryptography
+    secp256k1        >= 0.29   (Rust binding to libsecp256k1, Bitcoin Core's reference C implementation)
+    secp256k1-zkp    TBD       (Rust binding to libsecp256k1-zkp, Blockstream fork; introduced in step 3 for Pedersen + Bulletproofs)
+    sha2             >= 0.10   (RustCrypto SHA-256; used for the BSV double-SHA256 primitive)
+
+  BSV / Bitcoin types
+    bitcoin          TBD       (rust-bitcoin; consensus-layer compatible with BSV for txid / header / Merkle / basic script)
+    Replace or augment with a maintained BSV-specific library if needed; record choice and rationale in docs/DECISIONS.md.
+
+  Encoding / serialization
+    serde, serde_json, ciborium, hex, hex-literal
+
+  Errors / utilities
+    thiserror, anyhow
+
+  CLI
+    clap (derive)
+
+  Testing / benchmarks
+    proptest, criterion
+
+NETWORKS
+  Default test/CI: offline only. All vectors are committed to /vectors.
+  Optional live verification path against BSV mainnet / testnet headers is provided behind a feature flag,
+  not enabled in CI.
+
+HARDWARE FOR BENCHMARKS
+  TBD — populated when the first benchmark run is captured in /bench. The benchmark harness reports
+  median and IQR over many iterations on named hardware; no transactions-per-second figure is extrapolated.
+
+REPRODUCIBILITY
+  See docs/REPRODUCIBILITY.md for the exact commands to regenerate every value the paper cites.

@@ -1,0 +1,9 @@
+target/
+.git/
+.cargo/
+.github/
+docs/
+*.zip
+*.tar.gz
+**/.DS_Store
+**/Thumbs.db

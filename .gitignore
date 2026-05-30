@@ -1,0 +1,30 @@
+/target
+**/*.rs.bk
+
+# Per-machine cargo config (linker paths and similar are user-specific).
+.cargo/
+
+# Editor / OS
+.vscode/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Local environment
+.env
+.env.local
+
+# Python helpers (if any benchmarks/repro scripts use Python)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Criterion benchmark output
+target/criterion/
+
+# Local secrets / keys — never commit (see SECURITY.md).
+*.pem
+*.key
+secrets/

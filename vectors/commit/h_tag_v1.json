@@ -1,0 +1,7 @@
+{
+  "vector_id": "commit.h_tag.v1",
+  "source": "The Pedersen value-blinding generator H is derived from a NUMS tag = SHA-256('VAA-Pedersen-H-v1'). Anyone can reproduce by running: printf 'VAA-Pedersen-H-v1' | sha256sum. This vector pins the tag bytes so any change to the H derivation is caught by `vaa reproduce`.",
+  "domain_ascii": "VAA-Pedersen-H-v1",
+  "domain_hex": "5641412d506564657273656e2d482d7631",
+  "expected_h_tag_sha256": "53e2857d0e30dcefc0c861fb0cd52addf28c6112472aea92c8dae3beffab031b"
+}

@@ -1,0 +1,23 @@
+[package]
+name = "vaa-proofstore"
+description = "Selective verification / proof-sharding (WO 2025/119666 A1): generation, storage, non-overlapping sharding, indexing, proof-assistance publication, and the two assurance modes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+vaa-bsv = { path = "../bsv" }
+vaa-merkle = { path = "../merkle" }
+thiserror = { workspace = true }
+serde = { workspace = true, optional = true }
+
+[features]
+default = []
+serde = ["dep:serde", "vaa-bsv/serde", "vaa-merkle/serde"]
+
+[dev-dependencies]
+proptest = { workspace = true }
+hex = { workspace = true }

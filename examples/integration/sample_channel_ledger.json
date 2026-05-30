@@ -1,0 +1,12 @@
+{
+  "_comment": "Representative bonded-subsat-channel settlement record. The settlement_txid_display_be must be the on-chain settlement txid emitted by `channel close` / `channel contested`. For this example we use the historic Satoshi-to-Hal-Finney transfer (block 170) so the bridge can verify against real BSV mainnet data without needing a live channel deployment.",
+  "channel_id": "demo-channel-historic-0001",
+  "parties": ["satoshi", "hal"],
+  "k_quanta_per_sat": 1000,
+  "bond_satoshis_per_party": 1,
+  "settlement_txid_display_be": "f4184fc596403b9d638783cf57adfe4c75c605f6356fbc91338530e9831e9e16",
+  "final_balances_q": {
+    "satoshi": 4990000000,
+    "hal":     10000000000
+  }
+}

@@ -1,0 +1,30 @@
+[package]
+name = "vaa-zk"
+description = "Zero-knowledge layer: Σ-protocols on Pedersen commitments for linear accounting equations; Bulletproofs for range/validity proofs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+vaa-commit = { path = "../commit" }
+secp256k1-zkp = { workspace = true }
+rand = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true, optional = true }
+
+[features]
+default = ["serde"]
+serde = ["dep:serde", "vaa-commit/serde", "secp256k1-zkp/serde"]
+
+[dev-dependencies]
+hex = { workspace = true }
+proptest = { workspace = true }
+rand_chacha = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "zk_benches"
+harness = false

@@ -1,0 +1,16 @@
+{
+  "assistance_bytes": 1024,
+  "baseline_bytes_formula": 20480,
+  "baseline_bytes_realised": 20480,
+  "minimum_viable_bytes": 11264,
+  "n_leaves": 1024,
+  "note": "Timings are host-dependent (crypto-core/local) and omitted from the committed vector.",
+  "predetermined_level": 5,
+  "q_queries": 64,
+  "retrieval_adversarial_bytes": 328,
+  "retrieval_assisted_bytes": 168,
+  "seed": 2026053001,
+  "store_held_bytes_no_dedup": 21504,
+  "store_held_bytes_upper_dedup": 15424,
+  "tree_depth": 10
+}
