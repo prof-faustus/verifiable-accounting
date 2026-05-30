@@ -1,39 +1,25 @@
 {
-  "collusive_false_origin": {
-    "detected": 0,
-    "false_positives_clean": 0,
-    "injected": 1,
-    "missed": 1,
-    "name": "collusive_false_origin"
-  },
   "faults": [
     {
       "detected": 1,
       "false_positives_clean": 0,
       "injected": 1,
       "missed": 0,
-      "name": "altered_value"
+      "name": "altered_record_value"
     },
     {
       "detected": 1,
       "false_positives_clean": 0,
       "injected": 1,
       "missed": 0,
-      "name": "omitted_movement"
+      "name": "omitted_record"
     },
     {
       "detected": 1,
       "false_positives_clean": 0,
       "injected": 1,
       "missed": 0,
-      "name": "duplicated_movement"
-    },
-    {
-      "detected": 1,
-      "false_positives_clean": 0,
-      "injected": 1,
-      "missed": 0,
-      "name": "out_of_range_value"
+      "name": "duplicated_record"
     },
     {
       "detected": 1,
@@ -48,26 +34,35 @@
       "injected": 1,
       "missed": 0,
       "name": "wrong_index"
+    },
+    {
+      "detected": 1,
+      "false_positives_clean": 0,
+      "injected": 1,
+      "missed": 0,
+      "name": "wrong_root"
     }
   ],
   "inclusion_passed": 64,
   "inclusion_sample": 64,
-  "note": "Timings are host-dependent (crypto-core/local) and omitted from the committed vector.",
+  "note": "Timings are host-dependent (local measurements) and omitted from the committed vector.",
+  "origin_falsehood_detected": 0,
+  "origin_falsehood_injected": 1,
   "population": {
-    "ar_close": 167379609,
-    "ar_open": 23108957,
+    "ar_close": 160505918,
+    "ar_open": 22929100,
     "credit_notes_count": 20,
-    "credit_notes_total": 6827228,
+    "credit_notes_total": 7233334,
     "invoices_count": 100,
-    "invoices_total": 462772106,
-    "m_movements": 200,
+    "invoices_total": 421911011,
+    "m_records": 200,
     "receipts_count": 70,
-    "receipts_total": 309218700,
+    "receipts_total": 274198786,
     "write_offs_count": 10,
-    "write_offs_total": 2455526
+    "write_offs_total": 2902073
   },
-  "range_passed": 32,
-  "range_sample": 32,
   "roll_forward_holds": true,
-  "seed": 2026053002
+  "seed": 2026053002,
+  "selective_disclosure_checks": 64,
+  "selective_disclosure_passed": 64
 }

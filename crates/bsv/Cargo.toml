@@ -1,6 +1,6 @@
 [package]
 name = "vaa-bsv"
-description = "BSV (Bitcoin SV) primitive types, hashing, transaction/script model, and SPV header-chain glue for the Verifiable Accounting Arithmetic reference implementation."
+description = "BSV primitive types, hashing, transaction/script model, and SPV header-chain glue for the Verifiable Accounting Arithmetic reference implementation."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

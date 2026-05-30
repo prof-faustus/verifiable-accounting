@@ -16,7 +16,7 @@
 //! | **5–6** | [`IndexKey`] carries the index-schema fields the patent enumerates: txid, in/out flag, in/out position, position of the tx in the block, locking script, unlocking script, amount. |
 //! | **7** | The "function used to determine the proof" is the BSV double-SHA256 Merkle construction in [`vaa_merkle`]; the function is fixed for this project (see `docs/DECISIONS.md` D-002). |
 //! | **8** | [`ProofAssistance`] — node labels at the predetermined level `k`, computed at anchor time and queryable from the store. A verifier can reconstruct a truncated path up to level `k` and complete it against these public labels. |
-//! | **9–11** | EC-point homomorphic compression of the level-`k` labels. Exposed only behind [`ReconstructionMode::TrustedOperational`]; stub in this version (returns `TrustedOperationalNotImplemented`) and gated by step 5+ when `vaa-commit` adds the EC operations. |
+//! | **9–11** | EC-point homomorphic compression of the level-`k` labels on the BSV curve. Exposed only behind [`ReconstructionMode::TrustedOperational`]; this version returns `TrustedOperationalNotImplemented` and the audit path never accepts results from this mode. |
 //! | **12** | [`ProofStore::query`] returns the stored proof in response to an index-key query. |
 //!
 //! ## Two assurance modes
@@ -98,7 +98,7 @@ pub struct IndexKey {
     pub locking_script: Option<Vec<u8>>,
     /// Unlocking script bytes, if applicable.
     pub unlocking_script: Option<Vec<u8>>,
-    /// Output amount in satoshis, if known.
+    /// Output amount in minor units, if known.
     pub amount: Option<u64>,
 }
 

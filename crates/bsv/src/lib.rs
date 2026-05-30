@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Craig Wright
 
-//! BSV (Bitcoin SV) primitive types for the Verifiable Accounting Arithmetic
+//! BSV primitive types for the Verifiable Accounting Arithmetic
 //! reference implementation.
 //!
 //! This crate is the BSV boundary of the workspace. Other crates (`merkle`,
@@ -23,7 +23,7 @@ pub mod hash {
 
     /// Compute the BSV double-SHA256 of `input`.
     ///
-    /// Returns the 32-byte digest in the standard byte order used by Bitcoin
+    /// Returns the 32-byte digest in the standard byte order used by BSV
     /// when computing hashes (internal little-endian for txids; the caller is
     /// responsible for any display-time big-endian reversal).
     #[must_use]
@@ -40,7 +40,7 @@ pub mod hash {
 mod tests {
     use super::*;
 
-    /// Bitcoin double-SHA256 of the empty string. Known constant.
+    /// BSV double-SHA256 of the empty string. Known constant.
     #[test]
     fn double_sha256_empty_matches_known_vector() {
         // SHA256("") = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855

@@ -29,7 +29,7 @@ CI fails on any `fmt`, `clippy`, or test regression.
 
 ## Tests
 
-Every public function carries unit tests. The Merkle layer additionally carries property-based tests (`proptest`) and adversarial tests (wrong index, wrong root, wrong path, tampered leaf). Negative tests that *must* fail (e.g. the collusive-false-origin commitment boundary) are asserted in code, not papered over.
+Every public function carries unit tests. The Merkle layer additionally carries property-based tests (`proptest`) and adversarial tests (wrong index, wrong root, wrong path, tampered leaf). Negative tests that *must* fail (e.g. the origin-falsehood boundary — a record entered falsely at origin in an internally consistent population is NOT detected by design) are asserted in code, not papered over.
 
 Run only the property suite:
 

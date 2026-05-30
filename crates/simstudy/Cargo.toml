@@ -1,6 +1,6 @@
 [package]
 name = "vaa-simstudy"
-description = "Synthetic-population study: receivables roll-forward over committed values, with injected faults and detection counts. The E3 + E6 study."
+description = "Synthetic-population study: receivables roll-forward anchored on BSV, with injected faults and detection counts. Measures presence + integrity + selective disclosure via Merkle Proof Entity and Selective Verification."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,8 +16,6 @@ path = "src/main.rs"
 vaa-bsv = { path = "../bsv" }
 vaa-merkle = { path = "../merkle" }
 vaa-proofstore = { path = "../proofstore" }
-vaa-commit = { path = "../commit" }
-vaa-zk = { path = "../zk" }
 vaa-accounting = { path = "../accounting" }
 rand = { workspace = true }
 rand_chacha = { workspace = true }

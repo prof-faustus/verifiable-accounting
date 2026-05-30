@@ -1,38 +1,20 @@
 {
-  "entity": "Helix Subsat Services Ltd. (hypothetical)",
+  "entity": "Aurora Mid-Cap Services (hypothetical)",
   "period": "2026-04-01..2026-06-30",
-  "units": "satoshis",
+  "units": "minor_units",
   "equation": "AR_close = AR_open + Invoices - Receipts - CreditNotes - WriteOffs",
   "lines": {
-    "ar_open": {
-      "satoshis": 18200000,
-      "blinding_hex": "94b780c83159b50ba63718c1e779c44f9a734e1943a6c3f41d43a8ed1cab1852"
-    },
-    "invoices": {
-      "satoshis": 183944000,
-      "blinding_hex": "22cad5908a372f667e05a711c37368b8364ae133ee52ffb9dc084e8b26ccf7c7"
-    },
-    "receipts": {
-      "satoshis": 173419000,
-      "blinding_hex": "ad4a890decb6ff9423c71ebfc48a7b1a37f68a7ea7d1e79373fd3c102f2aae3f"
-    },
-    "credit_notes": {
-      "satoshis": 1800000,
-      "blinding_hex": "fdf8a86d650fc968fc2f9323aeef7364853a78bd471cf2e196030432da5d4bbe"
-    },
-    "write_offs": {
-      "satoshis": 950000,
-      "blinding_hex": "2101a684d4af93ce9f9bba9750c0cddaf209aed4de9f6be971f3b05ae9318c76"
-    },
-    "ar_close": {
-      "satoshis": 25975000,
-      "blinding_hex": "699b8c419cb7757078fbc77dc7d28ee0425697a55e5895d7449f838966fdd154"
-    }
+    "ar_open": 18200000,
+    "invoices": 183944000,
+    "receipts": 173419000,
+    "credit_notes": 1800000,
+    "write_offs": 950000,
+    "ar_close": 25975000
   },
   "identity_check": {
     "lhs_ar_open_plus_invoices": 202144000,
     "rhs_ar_close_plus_receipts_plus_credits_plus_writeoffs": 202144000,
     "holds": true
   },
-  "note": "Blinding factors are deterministic for example reproducibility; production blindings MUST come from a CSPRNG."
+  "note": "Identity checked by direct recomputation over the disclosed records. Inclusion of each record on BSV is proved separately via the Merkle Proof Entity (Layer A); selective retrieval of a record discloses only that record's bytes (Layer B selective disclosure)."
 }

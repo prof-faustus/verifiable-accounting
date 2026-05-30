@@ -6,12 +6,6 @@
 # -----------------------------------------------------------------------------
 FROM rust:1.85-bookworm AS builder
 
-# secp256k1-zkp builds C with autoconf, automake, libtool.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-        build-essential autoconf automake libtool pkg-config \
- && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /src
 COPY . .
 

@@ -23,23 +23,15 @@
 ### Tests
 
 - [ ] Unit tests added for every new public function
-- [ ] Property tests added if the change touches `merkle`, `commit`, or `proofstore`
+- [ ] Property tests added if the change touches `merkle` or `proofstore`
 - [ ] Adversarial / negative tests assert the failure path explicitly (no silent pass)
-- [ ] Boundary cases tested where relevant (empty, single-element, max-size, group-order, off-by-one)
-
-### Cryptography (if applicable)
-
-- [ ] No new hand-rolled cryptographic primitive — every primitive routes through a vetted library (`libsecp256k1`, `libsecp256k1-zkp`, `sha2`)
-- [ ] No secret-dependent branching in security-critical paths
-- [ ] No blinding factor, opened value, or secret key written to logs, panic messages, or `Debug` output beyond what is structurally necessary
-- [ ] Any new error variant for invalid scalar / commitment / proof has a regression test
-- [ ] Random-blinding code (if added) loops on a CSPRNG until a non-zero in-range scalar is drawn
+- [ ] Boundary cases tested where relevant (empty, single-element, max-size, off-by-one)
 
 ### BSV
 
 - [ ] Hashing uses `vaa_bsv::hash::double_sha256` (no other hash function added)
 - [ ] Byte-order handling is consistent: internal little-endian for hashing/computation, display big-endian only at the user-facing boundary
-- [ ] No Bitcoin-Core or Bitcoin-Cash specific assumption that BSV does not share
+- [ ] No assumption about anything outside BSV is introduced (nothing in source/docs/deps/lockfile names anything outside BSV)
 
 ### Documentation
 
@@ -52,19 +44,16 @@
 
 ### Reproducibility
 
-- [ ] No fabricated numbers, vectors, or benchmark results — every reported value comes from running code
+- [ ] No fabricated numbers, vectors, or chain fixtures — every reported value comes from running code
 - [ ] If a vector changes, the expected output under `vectors/` is regenerated in the same commit
 - [ ] `vaa reproduce` exits zero locally
 
 ### Hygiene
 
 - [ ] No secrets, keys, credentials, or personal-instruction files in the diff
-- [ ] No AI / assistant instruction files in the diff
 - [ ] Commit messages are imperative, descriptive, and free of internal-tool references
 
 ## Test plan
-
-<!-- How a reviewer can verify the change. Reference specific commands. -->
 
 ```
 cargo build --workspace --release

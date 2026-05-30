@@ -1,6 +1,6 @@
 [package]
 name = "vaa-accounting"
-description = "Accounting equation library, encodings, and validity rules. Defines the linear equations the ZK layer proves over committed values."
+description = "Accounting equation library and validity rules. Records mapped to data items anchored on BSV; equations checked by recomputation over the anchored records."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,11 +9,9 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-vaa-commit = { path = "../commit" }
-vaa-zk = { path = "../zk" }
 thiserror = { workspace = true }
 serde = { workspace = true, optional = true }
 
 [features]
 default = []
-serde = ["dep:serde", "vaa-commit/serde", "vaa-zk/serde"]
+serde = ["dep:serde"]

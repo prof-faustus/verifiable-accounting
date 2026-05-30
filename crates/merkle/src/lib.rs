@@ -14,7 +14,7 @@
 //!
 //! On BSV the hash is double-SHA256 (`H(x) = SHA256(SHA256(x))`, see
 //! [`vaa_bsv::hash::double_sha256`]) and the tree obeys the standard
-//! Bitcoin/BSV **odd-node duplication rule**: when a level has an odd number
+//! BSV **odd-node duplication rule**: when a level has an odd number
 //! of nodes, the last node is concatenated with itself before hashing. This
 //! makes the level-by-level construction unambiguous and reproduces the
 //! Merkle root that BSV anchors in every block header.
@@ -31,7 +31,7 @@
 //! ## Byte order
 //!
 //! All `Hash` values in this crate are in internal byte order — the order in
-//! which Bitcoin/BSV hashes are concatenated. The display order (big-endian
+//! which BSV hashes are concatenated. The display order (big-endian
 //! hexadecimal, as seen in block explorers) is the byte-reverse. The
 //! `vaa_bsv` crate provides display↔internal conversions; this crate does
 //! not assume one or the other.
@@ -70,7 +70,7 @@ pub enum MerkleError {
 ///
 /// - For an empty slice returns [`MerkleError::EmptyTree`].
 /// - For a single-leaf tree the root is the leaf itself (matches the
-///   BSV/Bitcoin convention that a one-transaction block's Merkle root equals
+///   BSV convention that a one-transaction block's Merkle root equals
 ///   the coinbase txid).
 /// - Otherwise the tree is built level by level, pairing adjacent nodes and
 ///   hashing their concatenation, duplicating the last node at any level
@@ -322,14 +322,14 @@ mod tests {
         }
     }
 
-    /// BSV/Bitcoin genesis block has a single transaction (the coinbase), so
+    /// BSV genesis block has a single transaction (the coinbase), so
     /// its Merkle root equals the coinbase txid. This is a known-vector test
     /// that documents the single-leaf convention and the byte-order choice.
     ///
     /// Coinbase txid display (big-endian, as shown on a BSV block explorer):
     /// `4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b`
     ///
-    /// In internal byte order (the bytes Bitcoin/BSV concatenates when
+    /// In internal byte order (the bytes BSV concatenates when
     /// hashing), the same value reversed:
     /// `3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a`
     #[test]
@@ -340,10 +340,9 @@ mod tests {
         assert_eq!(root, coinbase_internal);
     }
 
-    /// Real BSV mainnet block at height 170. Two transactions: the coinbase
-    /// and the historic Satoshi-to-Hal-Finney transfer. Source data committed
-    /// at `vectors/merkle/bsv_block_170_v1.json`, fetched live from the
-    /// WhatsOnChain BSV API.
+    /// A real BSV mainnet block with two transactions. Source data committed
+    /// at `vectors/merkle/bsv_block_v1.json`, fetched live from a public BSV
+    /// explorer.
     ///
     /// This exercises:
     ///   - real BSV-anchored Merkle root reconstruction,
@@ -351,15 +350,15 @@ mod tests {
     ///   - even-count duplication (2 leaves → 1 pair → root),
     ///   - proof generation and verification for each of the two leaves.
     #[test]
-    fn bsv_mainnet_block_170_merkle_root() {
+    fn bsv_mainnet_block_merkle_root() {
         // txids in display (big-endian) form, as shown by any BSV explorer.
-        let coinbase_display = "b1fea52486ce0c62bb442b530a3f0132b826c74e473d1f2c220bfa78111c5082";
-        let hal_finney_display = "f4184fc596403b9d638783cf57adfe4c75c605f6356fbc91338530e9831e9e16";
-        // Expected root in display form (header field).
+        let tx0_display = "b1fea52486ce0c62bb442b530a3f0132b826c74e473d1f2c220bfa78111c5082";
+        let tx1_display = "f4184fc596403b9d638783cf57adfe4c75c605f6356fbc91338530e9831e9e16";
+        // Expected root in display form (BSV header field).
         let expected_root_display =
             "7dac2c5666815c17a3b36427de37bb9d2e2c5ccec3f8633eb91a4205cb4c10ff";
 
-        // Bitcoin/BSV hashes in internal byte order are the display bytes reversed.
+        // BSV hashes in internal byte order are the display bytes reversed.
         let reverse = |s: &str| -> Hash {
             let mut bytes = hex::decode(s).unwrap();
             bytes.reverse();
@@ -368,13 +367,15 @@ mod tests {
             out
         };
 
-        let leaves = [reverse(coinbase_display), reverse(hal_finney_display)];
+        let leaves = [reverse(tx0_display), reverse(tx1_display)];
         let expected_root = reverse(expected_root_display);
 
         let root = merkle_root(&leaves).unwrap();
-        assert_eq!(root, expected_root, "BSV block 170 merkle root must match");
+        assert_eq!(
+            root, expected_root,
+            "BSV mainnet block merkle root must match"
+        );
 
-        // Verify a proof for each leaf.
         for i in 0..leaves.len() {
             let proof = merkle_proof(&leaves, i).unwrap();
             proof.verify(&leaves[i], &root).unwrap();

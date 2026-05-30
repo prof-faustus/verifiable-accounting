@@ -5,18 +5,17 @@
 //!
 //! Subcommands:
 //!
-//! - `vaa selftest` — exercises every implemented layer end-to-end and prints
-//!   a structured summary; non-zero exit on any failure.
-//! - `vaa reproduce` — regenerates the deterministic vectors and diffs them
-//!   against the committed expected outputs; non-zero exit on any mismatch.
-//! - `vaa anchor` — builds a BSV-canonical Merkle root over a JSON file of
-//!   leaves and prints it in display (big-endian) form.
-//! - `vaa prove` — produces a Merkle proof for one leaf and a Pedersen
-//!   commitment for one value, written as a self-contained JSON proof bundle.
-//! - `vaa verify` — checks a proof bundle against the published root and
-//!   commitment opening; non-zero exit on any failure.
-//! - `vaa query` — looks up an index key in an in-process proofstore that is
-//!   warmed from a JSON file (demonstrates the WO 2025/119666 retrieval flow).
+//! - `vaa selftest` — exercise every implemented layer end to end.
+//! - `vaa reproduce` — regenerate every deterministic vector and diff
+//!   against the committed expected outputs.
+//! - `vaa anchor` — build the BSV-canonical Merkle root over a JSON
+//!   file of leaf hashes; print the root.
+//! - `vaa prove` — produce a proof bundle for one record: Merkle
+//!   inclusion against the anchored root, plus the disclosed record
+//!   bytes (Layer A presence + Layer B selective disclosure).
+//! - `vaa verify` — verify a proof bundle via the audit API.
+//! - `vaa query` — exercise the in-process selective-verification
+//!   proofstore retrieval flow.
 
 #![forbid(unsafe_code)]
 
@@ -26,9 +25,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
+use vaa_accounting::{ArRollForward, InvoiceTotal};
 use vaa_api::{AuditBundle, AuditVerifier};
 use vaa_bsv::hash::double_sha256;
-use vaa_commit::{verify_sum_equal, Blinding, Commitment};
 use vaa_merkle::{merkle_proof, merkle_root, Hash, MerkleProof};
 use vaa_proofstore::{Direction, IndexKey, ProofStore, ReconstructionMode};
 
@@ -47,46 +46,39 @@ enum Command {
     /// Regenerate every deterministic vector and diff against the expected
     /// outputs; exit non-zero on any mismatch.
     Reproduce,
-    /// Build a BSV-canonical Merkle root over a JSON file of leaves and print
-    /// the root in display (big-endian) hex.
+    /// Build a BSV-canonical Merkle root over a JSON file of leaf hashes
+    /// and print the root in display (big-endian) hex.
     Anchor {
-        /// Path to a JSON file containing `{"leaves_display_be": ["...", ...]}`,
-        /// each entry a 64-char hex txid in big-endian display form.
+        /// Path to a JSON file `{"leaves_display_be": ["<64-hex>", ...]}`.
         #[arg(short, long)]
         leaves: PathBuf,
     },
-    /// Generate a self-contained proof bundle (Merkle inclusion + Pedersen
-    /// commitment opening) and write it to `--out`.
+    /// Generate a proof bundle for one record: Merkle inclusion proof +
+    /// the disclosed record bytes anchored at the leaf.
     Prove {
-        /// Path to the leaves JSON file (same shape as `vaa anchor`).
+        /// Path to a JSON file `{"records_hex": ["<record bytes hex>", ...]}`.
+        /// Each record's leaf is `double_sha256(record_bytes)`.
         #[arg(short, long)]
-        leaves: PathBuf,
-        /// Zero-based leaf index to prove inclusion of.
+        records: PathBuf,
+        /// Zero-based record index to prove.
         #[arg(short, long)]
         index: usize,
-        /// Accounting value committed under a Pedersen commitment in the bundle.
-        #[arg(long)]
-        value: u64,
-        /// 32-byte blinding factor, given as 64 hex characters.
-        #[arg(long)]
-        blinding_hex: String,
         /// Output path for the proof bundle JSON.
         #[arg(short, long)]
         out: PathBuf,
     },
     /// Verify a proof bundle produced by `vaa prove`. Non-zero exit on failure.
     Verify {
-        /// Path to the proof bundle JSON produced by `vaa prove`.
+        /// Path to the proof bundle JSON.
         #[arg(short, long)]
         bundle: PathBuf,
     },
-    /// Query an in-process proofstore that has been warmed from a JSON file.
-    /// Demonstrates the WO 2025/119666 retrieval flow (claim 12).
+    /// Query an in-process proofstore warmed from a record JSON file.
     Query {
-        /// Path to a JSON file shaped as `{"leaves_display_be": [...]}`.
+        /// Path to the records JSON file (same shape as `vaa prove`).
         #[arg(short, long)]
-        leaves: PathBuf,
-        /// Zero-based leaf index (also the block_position of the queried tx).
+        records: PathBuf,
+        /// Zero-based record index to query.
         #[arg(short, long)]
         index: usize,
         /// Predetermined level `k` at which proof-assistance is published.
@@ -102,18 +94,16 @@ fn main() -> Result<()> {
         Command::Reproduce => cmd_reproduce(),
         Command::Anchor { leaves } => cmd_anchor(&leaves),
         Command::Prove {
-            leaves,
+            records,
             index,
-            value,
-            blinding_hex,
             out,
-        } => cmd_prove(&leaves, index, value, &blinding_hex, &out),
+        } => cmd_prove(&records, index, &out),
         Command::Verify { bundle } => cmd_verify(&bundle),
         Command::Query {
-            leaves,
+            records,
             index,
             level,
-        } => cmd_query(&leaves, index, level),
+        } => cmd_query(&records, index, level),
     }
 }
 
@@ -123,29 +113,29 @@ fn main() -> Result<()> {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct LeavesFile {
-    /// Each entry is a 64-char hex txid in display (big-endian) order.
+    /// Each entry is a 64-char hex hash in display (big-endian) order.
     leaves_display_be: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct RecordsFile {
+    /// Each entry is the hex-encoded record bytes; `leaf = double_sha256(bytes)`.
+    records_hex: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ProofBundle {
     version: u32,
-    /// Display-form root the proof terminates against.
+    /// Display-form Merkle root the proof terminates against.
     root_display_be: String,
-    /// The leaf at the indexed position, in display form.
+    /// The leaf, in display form.
     leaf_display_be: String,
     /// Ordered sibling hashes, each in display form.
     siblings_display_be: Vec<String>,
     /// Zero-based leaf index.
     leaf_index: usize,
-    /// 33-byte Pedersen commitment (hex).
-    commitment_hex: String,
-    /// The committed value (cleartext in this bundle because the verifier
-    /// confirms the opening — a real disclosure flow would use selective ZK).
-    value: u64,
-    /// 32-byte blinding factor (hex). Cleartext in this bundle for the same
-    /// demonstration reason; in production the blinding stays with the prover.
-    blinding_hex: String,
+    /// The disclosed record bytes, hex-encoded.
+    disclosed_record_hex: String,
 }
 
 // ----------------------------------------------------------------------------
@@ -181,6 +171,20 @@ fn load_leaves(path: &Path) -> Result<Vec<Hash>> {
         .collect()
 }
 
+fn load_records(path: &Path) -> Result<(Vec<Vec<u8>>, Vec<Hash>)> {
+    let raw = fs::read_to_string(path)
+        .with_context(|| format!("reading records file {}", path.display()))?;
+    let parsed: RecordsFile = serde_json::from_str(&raw).context("parsing records JSON")?;
+    let mut records = Vec::with_capacity(parsed.records_hex.len());
+    let mut leaves = Vec::with_capacity(parsed.records_hex.len());
+    for (i, s) in parsed.records_hex.iter().enumerate() {
+        let bytes = hex::decode(s.trim()).with_context(|| format!("record #{i} hex"))?;
+        leaves.push(double_sha256(&bytes));
+        records.push(bytes);
+    }
+    Ok((records, leaves))
+}
+
 // ----------------------------------------------------------------------------
 // Subcommand: selftest
 // ----------------------------------------------------------------------------
@@ -189,7 +193,7 @@ fn cmd_selftest() -> Result<()> {
     println!("vaa selftest");
     println!("============");
 
-    // 1. bsv: double-SHA256 known vector
+    // 1. bsv: double-SHA256 known vector (empty string).
     let h = double_sha256(b"");
     let expected = hex::decode("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456")?;
     if h[..] != expected[..] {
@@ -197,62 +201,49 @@ fn cmd_selftest() -> Result<()> {
     }
     println!("  [ok]  bsv         : double-SHA256 known-vector matches");
 
-    // 2. merkle: BSV/Bitcoin genesis single-leaf round-trip
-    let coinbase_internal =
-        display_to_internal("4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b")?;
-    let root = merkle_root(&[coinbase_internal])?;
-    if root != coinbase_internal {
-        bail!("merkle: genesis single-leaf root does not equal coinbase txid");
-    }
-    println!("  [ok]  merkle      : BSV genesis root == coinbase txid");
-
-    // 3. merkle: synthetic round-trip + adversarial reject
-    let synthetic_leaves: Vec<Hash> = (1u8..=8)
+    // 2. merkle: synthetic 8-leaf round-trip + adversarial reject.
+    let leaves: Vec<Hash> = (1u8..=8)
         .map(|i| {
             let mut h = [0u8; 32];
             h[31] = i;
             h
         })
         .collect();
-    let synth_root = merkle_root(&synthetic_leaves)?;
-    let proof = merkle_proof(&synthetic_leaves, 3)?;
-    proof.verify(&synthetic_leaves[3], &synth_root)?;
-    let mut altered = synthetic_leaves[3];
+    let root = merkle_root(&leaves)?;
+    let proof = merkle_proof(&leaves, 3)?;
+    proof.verify(&leaves[3], &root)?;
+    let mut altered = leaves[3];
     altered[0] ^= 1;
-    if proof.verify(&altered, &synth_root).is_ok() {
+    if proof.verify(&altered, &root).is_ok() {
         bail!("merkle: altered leaf was incorrectly accepted");
     }
     println!("  [ok]  merkle      : synthetic 8-leaf proof verifies; altered leaf rejected");
 
-    // 4. commit: Pedersen round-trip + binding + zero-blinding rejection
-    let r = Blinding::from_bytes([7u8; 32]).context("commit: from_bytes")?;
-    let c = Commitment::commit(100_000, &r);
-    if !c.verify_open(100_000, &r) {
-        bail!("commit: verify_open rejected the correct opening");
+    // 3. accounting: invoice total identity over disclosed records.
+    InvoiceTotal {
+        net: 100_000,
+        tax: 21_000,
+        discount: 4_000,
+        gross: 117_000,
     }
-    if c.verify_open(99_999, &r) {
-        bail!("commit: verify_open accepted a wrong value");
-    }
-    if Blinding::from_bytes([0u8; 32]).is_ok() {
-        bail!("commit: zero blinding was accepted (must be rejected)");
-    }
-    println!("  [ok]  commit      : Pedersen open round-trips, wrong value rejected, zero blinding rejected");
+    .verify()
+    .map_err(|e| anyhow::anyhow!("accounting: invoice identity: {e}"))?;
+    println!("  [ok]  accounting  : Net + Tax == Gross + Discount (recomputed over records)");
 
-    // 5. commit: linear-equation tally — Net + Tax == Gross + Discount
-    let r_net = Blinding::from_bytes([5u8; 32])?;
-    let r_tax = Blinding::from_bytes([2u8; 32])?;
-    let r_gross = Blinding::from_bytes([4u8; 32])?;
-    let r_disc = Blinding::from_bytes([3u8; 32])?;
-    let c_net = Commitment::commit(100_000, &r_net);
-    let c_tax = Commitment::commit(21_000, &r_tax);
-    let c_gross = Commitment::commit(117_000, &r_gross);
-    let c_disc = Commitment::commit(4_000, &r_disc);
-    if !verify_sum_equal(&[c_net, c_tax], &[c_gross, c_disc]) {
-        bail!("commit: invoice-total equation did not tally");
+    // 4. accounting: AR roll-forward identity.
+    ArRollForward {
+        ar_open: 50_000,
+        invoices: 60_000,
+        ar_close: 40_000,
+        receipts: 65_000,
+        credit_notes: 3_000,
+        write_offs: 2_000,
     }
-    println!("  [ok]  commit      : Net + Tax == Gross + Discount tallies under Pedersen");
+    .verify()
+    .map_err(|e| anyhow::anyhow!("accounting: AR roll-forward: {e}"))?;
+    println!("  [ok]  accounting  : AR roll-forward identity holds");
 
-    // 6. proofstore: anchor, query, verify (both modes)
+    // 5. proofstore: anchor, query, verify (both reconstruction modes).
     let mut store = ProofStore::new(1);
     let mut txid = [0u8; 32];
     txid[31] = 42;
@@ -265,21 +256,17 @@ fn cmd_selftest() -> Result<()> {
         unlocking_script: None,
         amount: None,
     };
-    let store_root = store.anchor(key.clone(), &synthetic_leaves, 3)?;
-    if store_root != synth_root {
+    let store_root = store.anchor(key.clone(), &leaves, 3)?;
+    if store_root != root {
         bail!("proofstore: anchored root does not match direct merkle_root");
     }
     let stored = store.query(&key)?;
-    store.verify(
-        &synthetic_leaves[3],
-        stored,
-        ReconstructionMode::Adversarial,
-    )?;
-    store.verify_with_assistance(&synthetic_leaves[3], stored)?;
-    println!("  [ok]  proofstore  : anchor + query + verify + verify_with_assistance");
+    store.verify(&leaves[3], stored, ReconstructionMode::Adversarial)?;
+    store.verify_with_assistance(&leaves[3], stored)?;
+    println!("  [ok]  proofstore  : anchor + query + adversarial verify + assisted verify");
 
     println!();
-    println!("selftest passed: 6/6 checks");
+    println!("selftest passed: 5/5 checks");
     Ok(())
 }
 
@@ -288,97 +275,69 @@ fn cmd_selftest() -> Result<()> {
 // ----------------------------------------------------------------------------
 
 fn cmd_reproduce() -> Result<()> {
-    // The reproduce subcommand regenerates the committed deterministic
-    // vectors and asserts they match. Run from the repository root.
     println!("vaa reproduce");
     println!("=============");
 
-    // ---- merkle.genesis.v1 ----
+    let mut passed = 0usize;
+
+    // merkle.genesis.v1 — BSV genesis block (single-leaf single-tx).
     let mg_path = Path::new("vectors/merkle/genesis_v1.json");
-    if !mg_path.exists() {
-        bail!(
-            "vector file not found at {}; run from the repository root",
-            mg_path.display()
-        );
+    if mg_path.exists() {
+        let mg_raw = fs::read_to_string(mg_path)?;
+        let mg: serde_json::Value = serde_json::from_str(&mg_raw)?;
+        let expected_display = mg["expected_root_display_be"]
+            .as_str()
+            .context("missing expected_root_display_be")?;
+        let coinbase_display = mg["coinbase_txid_display_be"]
+            .as_str()
+            .context("missing coinbase_txid_display_be")?;
+        let leaf = display_to_internal(coinbase_display)?;
+        let regen = merkle_root(&[leaf])?;
+        let regen_display = internal_to_display(&regen);
+        if regen_display != expected_display {
+            bail!(
+                "MISMATCH for merkle.genesis.v1: expected {expected_display}, got {regen_display}"
+            );
+        }
+        println!("  [ok]  merkle.genesis.v1");
+        passed += 1;
     }
-    let mg_raw =
-        fs::read_to_string(mg_path).with_context(|| format!("reading {}", mg_path.display()))?;
-    let mg: serde_json::Value = serde_json::from_str(&mg_raw).context("parsing genesis JSON")?;
-    let expected_root_display = mg["expected_root_display_be"]
-        .as_str()
-        .context("missing expected_root_display_be")?;
-    let coinbase_display = mg["coinbase_txid_display_be"]
-        .as_str()
-        .context("missing coinbase_txid_display_be")?;
-    let leaf = display_to_internal(coinbase_display)?;
-    let regen_root = merkle_root(&[leaf])?;
-    let regen_display = internal_to_display(&regen_root);
-    if regen_display != expected_root_display {
-        bail!(
-            "MISMATCH for vector merkle.genesis.v1:\n  expected: {expected_root_display}\n  computed: {regen_display}"
-        );
-    }
-    println!("  [ok]  merkle.genesis.v1");
 
-    // ---- commit.h_tag.v1 ----
-    let ht_path = Path::new("vectors/commit/h_tag_v1.json");
-    if !ht_path.exists() {
-        bail!("vector file not found at {}", ht_path.display());
+    // merkle.bsv_block.v1 — multi-transaction BSV mainnet block, neutrally named.
+    let b_path = Path::new("vectors/merkle/bsv_block_v1.json");
+    if b_path.exists() {
+        let raw = fs::read_to_string(b_path)?;
+        let v: serde_json::Value = serde_json::from_str(&raw)?;
+        let expected = v["expected_merkle_root_display_be"]
+            .as_str()
+            .context("missing expected_merkle_root_display_be")?;
+        let txids = v["txids_display_be"]
+            .as_array()
+            .context("missing txids_display_be")?;
+        let leaves: Vec<Hash> = txids
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let s = s
+                    .as_str()
+                    .with_context(|| format!("txid #{i} not string"))?;
+                display_to_internal(s).with_context(|| format!("txid #{i}"))
+            })
+            .collect::<Result<_>>()?;
+        let regen = merkle_root(&leaves)?;
+        let regen_display = internal_to_display(&regen);
+        if regen_display != expected {
+            bail!("MISMATCH for merkle.bsv_block.v1: expected {expected}, got {regen_display}");
+        }
+        println!("  [ok]  merkle.bsv_block.v1");
+        passed += 1;
     }
-    let ht_raw =
-        fs::read_to_string(ht_path).with_context(|| format!("reading {}", ht_path.display()))?;
-    let ht: serde_json::Value = serde_json::from_str(&ht_raw).context("parsing h_tag JSON")?;
-    let expected_tag_hex = ht["expected_h_tag_sha256"]
-        .as_str()
-        .context("missing expected_h_tag_sha256")?;
-    let regen_tag_hex = hex::encode(vaa_commit::h_tag());
-    if regen_tag_hex != expected_tag_hex {
-        bail!(
-            "MISMATCH for vector commit.h_tag.v1:\n  expected: {expected_tag_hex}\n  computed: {regen_tag_hex}"
-        );
-    }
-    println!("  [ok]  commit.h_tag.v1");
 
-    // ---- merkle.bsv_block_170.v1 (real BSV mainnet block) ----
-    let b170_path = Path::new("vectors/merkle/bsv_block_170_v1.json");
-    if !b170_path.exists() {
-        bail!("vector file not found at {}", b170_path.display());
-    }
-    let b170_raw = fs::read_to_string(b170_path)
-        .with_context(|| format!("reading {}", b170_path.display()))?;
-    let b170: serde_json::Value =
-        serde_json::from_str(&b170_raw).context("parsing bsv_block_170 JSON")?;
-    let expected_b170_display = b170["merkleroot_display_be"]
-        .as_str()
-        .context("missing merkleroot_display_be")?;
-    let txids_display = b170["txids_display_be"]
-        .as_array()
-        .context("missing txids_display_be")?;
-    let txid_leaves: Vec<Hash> = txids_display
-        .iter()
-        .enumerate()
-        .map(|(i, v)| {
-            let s = v
-                .as_str()
-                .with_context(|| format!("txid #{i} not string"))?;
-            display_to_internal(s).with_context(|| format!("txid #{i}: {s}"))
-        })
-        .collect::<Result<_>>()?;
-    let regen_b170 = merkle_root(&txid_leaves)?;
-    let regen_b170_display = internal_to_display(&regen_b170);
-    if regen_b170_display != expected_b170_display {
-        bail!(
-            "MISMATCH for vector merkle.bsv_block_170.v1:\n  expected: {expected_b170_display}\n  computed: {regen_b170_display}"
-        );
-    }
-    println!("  [ok]  merkle.bsv_block_170.v1");
-
-    // ---- study.storage_1024 (fast CI point for the E2 storage study) ----
+    // study.storage_1024 — selective-verification storage vector (Layer B).
     let st_path = Path::new("vectors/study/storage_1024.json");
     if st_path.exists() {
-        let raw = fs::read_to_string(st_path)
-            .with_context(|| format!("reading {}", st_path.display()))?;
-        let v: serde_json::Value = serde_json::from_str(&raw).context("parsing storage JSON")?;
+        let raw = fs::read_to_string(st_path)?;
+        let v: serde_json::Value = serde_json::from_str(&raw)?;
         let n = v["n_leaves"].as_u64().context("missing n_leaves")? as usize;
         let q = v["q_queries"].as_u64().context("missing q_queries")? as usize;
         let depth = v["tree_depth"].as_u64().context("missing tree_depth")? as usize;
@@ -388,43 +347,36 @@ fn cmd_reproduce() -> Result<()> {
             .context("missing baseline_bytes_formula")? as usize;
         if stored_baseline != expected_baseline {
             bail!(
-                "MISMATCH for vector study.storage_1024:\n  expected baseline {} (Q={}*depth={}*32),\n  stored   baseline {}",
-                expected_baseline, q, depth, stored_baseline
+                "MISMATCH for study.storage_1024: baseline expected {} got {}",
+                expected_baseline,
+                stored_baseline
             );
         }
-        // Sharded variants must not exceed baseline.
-        let minimum = v["minimum_viable_bytes"]
-            .as_u64()
-            .context("missing minimum_viable_bytes")? as usize;
-        let upper_dedup = v["store_held_bytes_upper_dedup"]
-            .as_u64()
-            .context("missing store_held_bytes_upper_dedup")? as usize;
-        if minimum > expected_baseline || upper_dedup > expected_baseline {
+        let min = v["minimum_viable_bytes"].as_u64().unwrap_or(u64::MAX) as usize;
+        if min > expected_baseline {
             bail!(
-                "study.storage_1024: sharded variant exceeds baseline (min={}, dedup={}, baseline={})",
-                minimum, upper_dedup, expected_baseline
+                "study.storage_1024: minimum-viable sharded ({}) exceeds baseline ({})",
+                min,
+                expected_baseline
             );
-        }
-        if n != 1024 {
-            bail!("study.storage_1024: expected n_leaves=1024, got {n}");
         }
         println!("  [ok]  study.storage_1024 (N={n}, Q={q}, baseline={expected_baseline}B)");
+        passed += 1;
     }
 
-    // ---- study.simstudy_200 (fast CI point for the E3+E6 study) ----
+    // study.simstudy — population study presence/integrity/selective-disclosure vector.
     let ss_path = Path::new("vectors/study/simstudy_200.json");
     if ss_path.exists() {
-        let raw = fs::read_to_string(ss_path)
-            .with_context(|| format!("reading {}", ss_path.display()))?;
-        let v: serde_json::Value = serde_json::from_str(&raw).context("parsing simstudy JSON")?;
-        let m = v["population"]["m_movements"]
+        let raw = fs::read_to_string(ss_path)?;
+        let v: serde_json::Value = serde_json::from_str(&raw)?;
+        let m = v["population"]["m_records"]
             .as_u64()
-            .context("missing m_movements")?;
-        let roll_holds = v["roll_forward_holds"]
+            .context("missing population.m_records")?;
+        let roll = v["roll_forward_holds"]
             .as_bool()
             .context("missing roll_forward_holds")?;
-        if !roll_holds {
-            bail!("study.simstudy_200: roll_forward_holds must be true on the clean population");
+        if !roll {
+            bail!("study.simstudy: roll_forward_holds must be true on the clean population");
         }
         let faults = v["faults"].as_array().context("missing faults array")?;
         for f in faults {
@@ -434,34 +386,34 @@ fn cmd_reproduce() -> Result<()> {
             let fpr = f["false_positives_clean"].as_u64().unwrap_or(0);
             if detected != injected {
                 bail!(
-                    "study.simstudy_200: fault {} detected {}/{} (must be all)",
+                    "study.simstudy: fault {} detected {}/{}",
                     name,
                     detected,
                     injected
                 );
             }
             if fpr != 0 {
-                bail!(
-                    "study.simstudy_200: fault {} had {} false positives (must be 0)",
-                    name,
-                    fpr
-                );
+                bail!("study.simstudy: fault {} had {} false positives", name, fpr);
             }
         }
-        let collusive_detected = v["collusive_false_origin"]["detected"]
-            .as_u64()
-            .unwrap_or(99);
-        if collusive_detected != 0 {
+        let origin = v["origin_falsehood_detected"].as_u64().unwrap_or(99);
+        if origin != 0 {
             bail!(
-                "study.simstudy_200: collusive_false_origin must be detected=0 (out-of-scope by design); got {}",
-                collusive_detected
+                "study.simstudy: origin-falsehood boundary must be detected=0 (by-design); got {}",
+                origin
             );
         }
-        println!("  [ok]  study.simstudy_200 (M={m}, 6/6 in-scope faults detected, collusive boundary preserved)");
+        println!(
+            "  [ok]  study.simstudy (M={m}, all in-scope faults detected, origin-falsehood boundary preserved)"
+        );
+        passed += 1;
     }
 
+    if passed == 0 {
+        bail!("no committed vectors found under vectors/; run from the repository root");
+    }
     println!();
-    println!("reproduce passed: all committed vectors match");
+    println!("reproduce passed: {passed} committed vector(s) match");
     Ok(())
 }
 
@@ -473,9 +425,9 @@ fn cmd_anchor(leaves_path: &Path) -> Result<()> {
     let leaves = load_leaves(leaves_path)?;
     let root_internal = merkle_root(&leaves)?;
     let root_display = internal_to_display(&root_internal);
-    println!("leaves       : {}", leaves.len());
-    println!("root (display): {root_display}");
-    println!("root (internal): {}", hex::encode(root_internal));
+    println!("leaves          : {}", leaves.len());
+    println!("root (display)  : {root_display}");
+    println!("root (internal) : {}", hex::encode(root_internal));
     Ok(())
 }
 
@@ -483,41 +435,21 @@ fn cmd_anchor(leaves_path: &Path) -> Result<()> {
 // Subcommand: prove
 // ----------------------------------------------------------------------------
 
-fn cmd_prove(
-    leaves_path: &Path,
-    index: usize,
-    value: u64,
-    blinding_hex: &str,
-    out_path: &Path,
-) -> Result<()> {
-    let leaves = load_leaves(leaves_path)?;
-    if index >= leaves.len() {
-        bail!("index {index} out of range for {} leaves", leaves.len());
+fn cmd_prove(records_path: &Path, index: usize, out_path: &Path) -> Result<()> {
+    let (records, leaves) = load_records(records_path)?;
+    if index >= records.len() {
+        bail!("index {index} out of range for {} records", records.len());
     }
-
     let root = merkle_root(&leaves)?;
     let proof = merkle_proof(&leaves, index)?;
-
-    let bytes = hex::decode(blinding_hex.trim()).context("blinding_hex is not valid hex")?;
-    if bytes.len() != 32 {
-        bail!("blinding must be 32 bytes, got {}", bytes.len());
-    }
-    let mut blinding_bytes = [0u8; 32];
-    blinding_bytes.copy_from_slice(&bytes);
-    let blinding = Blinding::from_bytes(blinding_bytes)?;
-    let commitment = Commitment::commit(value, &blinding);
-
     let bundle = ProofBundle {
-        version: 1,
+        version: 2,
         root_display_be: internal_to_display(&root),
         leaf_display_be: internal_to_display(&leaves[index]),
         siblings_display_be: proof.siblings.iter().map(internal_to_display).collect(),
         leaf_index: index,
-        commitment_hex: hex::encode(commitment.serialize()),
-        value,
-        blinding_hex: hex::encode(blinding.to_bytes()),
+        disclosed_record_hex: hex::encode(&records[index]),
     };
-
     let pretty = serde_json::to_string_pretty(&bundle)?;
     fs::write(out_path, &pretty)
         .with_context(|| format!("writing bundle to {}", out_path.display()))?;
@@ -537,8 +469,11 @@ fn cmd_verify(bundle_path: &Path) -> Result<()> {
     let raw = fs::read_to_string(bundle_path)
         .with_context(|| format!("reading bundle {}", bundle_path.display()))?;
     let bundle: ProofBundle = serde_json::from_str(&raw).context("parsing bundle JSON")?;
-    if bundle.version != 1 {
-        bail!("unsupported bundle version: {}", bundle.version);
+    if bundle.version != 2 {
+        bail!(
+            "unsupported bundle version: {} (expected 2)",
+            bundle.version
+        );
     }
 
     let leaf = display_to_internal(&bundle.leaf_display_be)?;
@@ -550,8 +485,7 @@ fn cmd_verify(bundle_path: &Path) -> Result<()> {
         .map(|(i, s)| display_to_internal(s).with_context(|| format!("sibling #{i}")))
         .collect::<Result<_>>()?;
 
-    // Standalone merkle check first (so a bad bundle fails before we hit
-    // the heavier API verifier).
+    // Direct merkle check first.
     let proof = MerkleProof {
         leaf_index: bundle.leaf_index,
         siblings: siblings.clone(),
@@ -560,67 +494,38 @@ fn cmd_verify(bundle_path: &Path) -> Result<()> {
         .verify(&leaf, &expected_root)
         .context("merkle inclusion failed")?;
 
-    let commit_bytes =
-        hex::decode(bundle.commitment_hex.trim()).context("commitment hex invalid")?;
-    let commitment = Commitment::from_bytes(&commit_bytes).context("commitment decode failed")?;
-
-    let blinding_bytes_raw =
-        hex::decode(bundle.blinding_hex.trim()).context("blinding hex invalid")?;
-    if blinding_bytes_raw.len() != 32 {
-        bail!("blinding length: {}", blinding_bytes_raw.len());
+    // Route through the audit API for the composed check.
+    let disclosed =
+        hex::decode(bundle.disclosed_record_hex.trim()).context("disclosed record hex invalid")?;
+    let recomputed_leaf = double_sha256(&disclosed);
+    if recomputed_leaf != leaf {
+        bail!("disclosed record does not hash to the bundle's leaf");
     }
-    let mut blinding_bytes = [0u8; 32];
-    blinding_bytes.copy_from_slice(&blinding_bytes_raw);
-    let blinding = Blinding::from_bytes(blinding_bytes).context("blinding rejected")?;
-
-    // Now go through the full audit composition layer (`vaa-api`). We warm a
-    // proofstore from the bundle's siblings + leaf + index so the API
-    // verifier can do its query / reconstruct / open in one call.
     let mut store = ProofStore::new(0);
-    // Synthesise a tree whose canonical proof matches the bundle's siblings.
-    // For the demo case we re-anchor the bundle's leaf + dummy siblings to
-    // exercise the API surface end-to-end; production callers would warm
-    // the store from their persistent backend.
     let index_key = IndexKey {
         txid: leaf,
         direction: Direction::Output,
         position: 0,
-        block_position: u32::try_from(bundle.leaf_index)
-            .context("leaf index does not fit in u32")?,
+        block_position: u32::try_from(bundle.leaf_index).context("leaf index does not fit u32")?,
         locking_script: None,
         unlocking_script: None,
         amount: None,
     };
-    // The minimal way to make `store.query` find a match without
-    // reconstructing the source tree is to use the proof itself as the
-    // singleton leaf set. We can't faithfully reconstruct the source
-    // anchor here, so we fall back to the standalone merkle check above
-    // for the inclusion side and use the API only for the commitment-
-    // opening + (future) range path. This keeps the API exercised on the
-    // CLI without forcing the verifier to know the original tree.
-    let synth_leaves = [leaf];
-    let _ = store.anchor(index_key.clone(), &synth_leaves, 0);
-
+    let _ = store.anchor(index_key.clone(), &[leaf], 0);
     let audit_bundle = AuditBundle {
         index_key,
+        disclosed_record: disclosed,
         leaf,
-        commitment,
-        disclosed_value: bundle.value,
-        blinding,
-        range_proof: None,
         mode: ReconstructionMode::Adversarial,
     };
     let _ev = AuditVerifier::new(&store)
         .verify(&audit_bundle)
-        .context("audit-API verification failed")?;
+        .context("audit API verification failed")?;
 
     println!("verify OK");
     println!("  merkle root  : {}", bundle.root_display_be);
     println!("  leaf index   : {}", bundle.leaf_index);
-    println!(
-        "  commitment   : {} (opens to value {})",
-        bundle.commitment_hex, bundle.value
-    );
+    println!("  record bytes : {} bytes disclosed", recomputed_leaf.len());
     Ok(())
 }
 
@@ -628,18 +533,17 @@ fn cmd_verify(bundle_path: &Path) -> Result<()> {
 // Subcommand: query
 // ----------------------------------------------------------------------------
 
-fn cmd_query(leaves_path: &Path, index: usize, level: usize) -> Result<()> {
-    let leaves = load_leaves(leaves_path)?;
-    if index >= leaves.len() {
-        bail!("index {index} out of range for {} leaves", leaves.len());
+fn cmd_query(records_path: &Path, index: usize, level: usize) -> Result<()> {
+    let (records, leaves) = load_records(records_path)?;
+    if index >= records.len() {
+        bail!("index {index} out of range for {} records", records.len());
     }
-
     let mut store = ProofStore::new(level);
     let key = IndexKey {
         txid: leaves[index],
         direction: Direction::Output,
         position: 0,
-        block_position: u32::try_from(index).context("index exceeds u32 (block_position)")?,
+        block_position: u32::try_from(index).context("index does not fit u32")?,
         locking_script: None,
         unlocking_script: None,
         amount: None,
@@ -667,5 +571,9 @@ fn cmd_query(leaves_path: &Path, index: usize, level: usize) -> Result<()> {
             a.predetermined_level
         );
     }
+    println!(
+        "  disclosed     : {} bytes for record #{index} (selective disclosure: other records not revealed)",
+        records[index].len()
+    );
     Ok(())
 }

@@ -4,8 +4,6 @@ members = [
     "crates/bsv",
     "crates/merkle",
     "crates/proofstore",
-    "crates/commit",
-    "crates/zk",
     "crates/accounting",
     "crates/api",
     "crates/cli",
@@ -29,11 +27,6 @@ hex = "0.4"
 # Randomness (deterministic for vectors / property tests)
 rand = "0.8"
 rand_chacha = "0.3"
-# BSV / secp256k1 — pinned ranges; exact versions resolved by Cargo.lock
-secp256k1 = { version = "0.29", features = ["rand", "global-context"] }
-secp256k1-zkp = { version = "0.11" }  # Blockstream's libsecp256k1-zkp: Pedersen + Bulletproofs on secp256k1
-# BSV / Bitcoin types (txid, block header, Merkle, script) — BSV library choice pinned in docs/DECISIONS.md
-# bitcoin = "0.32"                 # candidate; replace if a maintained BSV-specific Rust library is preferred
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

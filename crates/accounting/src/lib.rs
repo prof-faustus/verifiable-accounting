@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Craig Wright
 
-//! Accounting equation library and validity rules.
+//! Accounting equation library.
 //!
-//! Defines the equations that the ZK layer proves over committed accounting
-//! values. All five equations enumerated below are linear in the
-//! committed values, which is the design constraint enabling Σ-protocol proofs
-//! (see `docs/DECISIONS.md` D-003).
+//! Each accounting record is mapped to a data item anchored on BSV via the
+//! Merkle Proof Entity (Layer A). Selective disclosure (Layer B) returns the
+//! disclosed records for a query without revealing any other record. The
+//! verifier then **recomputes** the accounting equation directly over those
+//! disclosed `u64` records and rejects any equation that does not hold.
 //!
-//! The equations are:
+//! The library carries the five accounting equations:
 //!
 //! 1. [`InvoiceTotal`]   — `Gross = Net + Tax − Discount`
 //! 2. [`ArRollForward`]  — `AR_close = AR_open + Invoices − Receipts − CreditNotes − WriteOffs`
@@ -16,67 +17,61 @@
 //! 4. [`BankReconciliation`] — `BookCash + ReconcilingItems = BankBalance`
 //! 5. [`VatPayable`]     — `VAT_payable = OutputVAT − InputVAT`
 //!
-//! Each struct accepts pre-committed Pedersen commitments and verifies the
-//! equation via the underlying tally. The blinding factors used by the
-//! prover MUST tally on the same partition as the values, or the proof will
-//! be rejected even though the values are arithmetically correct — this is
-//! intentional: it binds the prover to a consistent set of openings.
-//!
-//! ## Boundary
-//!
-//! The library encodes accounting equations as mathematical identities over
-//! committed values. It does not certify accounting judgement: whether a
-//! particular figure represents revenue under IFRS 15, or is correctly
-//! classified between current and non-current, is outside the system. See
-//! `docs/SECURITY.md`.
+//! Boundary: the library checks the equation; it does not certify accounting
+//! judgement (recognition under any accounting standard, classification,
+//! related-party status, etc.). It also cannot detect a record entered
+//! falsely at origin where the population is internally consistent — that is
+//! the documented system boundary; see `docs/SECURITY.md`.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs, missing_debug_implementations)]
 
-use vaa_commit::Commitment;
-use vaa_zk::LinearEquation;
-
 /// Errors returned by the accounting layer.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Eq, PartialEq)]
 pub enum AccountingError {
-    /// The equation's tally over the committed values did not close.
-    #[error("accounting equation did not hold under the committed openings")]
+    /// The equation did not hold under the disclosed records.
+    #[error("accounting equation did not hold under the disclosed records")]
     EquationDoesNotHold,
+    /// An arithmetic operation under-/over-flowed `u64` while recomputing.
+    #[error("accounting equation overflowed u64 during recomputation")]
+    Overflow,
 }
 
 // ---------------------------------------------------------------------------
-// 1. Invoice total: Gross = Net + Tax − Discount
+// 1. Invoice total: Gross = Net + Tax − Discount  (minor units, u64)
 // ---------------------------------------------------------------------------
 
-/// `Gross = Net + Tax − Discount`. Rearranged for tally:
-/// `Net + Tax == Gross + Discount`.
-#[derive(Clone, Copy, Debug)]
+/// `Gross = Net + Tax − Discount`. All values are minor units (`u64`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct InvoiceTotal {
     /// Net amount (pre-tax, pre-discount).
-    pub net: Commitment,
+    pub net: u64,
     /// Tax amount.
-    pub tax: Commitment,
+    pub tax: u64,
     /// Discount granted.
-    pub discount: Commitment,
+    pub discount: u64,
     /// Gross amount actually billed.
-    pub gross: Commitment,
+    pub gross: u64,
 }
 
 impl InvoiceTotal {
-    /// Verify `Net + Tax == Gross + Discount`.
+    /// Verify `Net + Tax == Gross + Discount` over the disclosed records.
     ///
     /// # Errors
     ///
-    /// Returns [`AccountingError::EquationDoesNotHold`] if the tally fails.
+    /// [`AccountingError::Overflow`] if either side overflows `u64`;
+    /// [`AccountingError::EquationDoesNotHold`] if the sides differ.
     pub fn verify(&self) -> Result<(), AccountingError> {
-        let positive = [self.net, self.tax];
-        let negative = [self.gross, self.discount];
-        if (LinearEquation {
-            positive: &positive,
-            negative: &negative,
-        })
-        .verify()
-        {
+        let lhs = self
+            .net
+            .checked_add(self.tax)
+            .ok_or(AccountingError::Overflow)?;
+        let rhs = self
+            .gross
+            .checked_add(self.discount)
+            .ok_or(AccountingError::Overflow)?;
+        if lhs == rhs {
             Ok(())
         } else {
             Err(AccountingError::EquationDoesNotHold)
@@ -85,48 +80,50 @@ impl InvoiceTotal {
 }
 
 // ---------------------------------------------------------------------------
-// 2. AR roll-forward: AR_close = AR_open + Invoices − Receipts − CreditNotes − WriteOffs
+// 2. AR roll-forward
 // ---------------------------------------------------------------------------
 
 /// Accounts-receivable roll-forward.
 /// `AR_close = AR_open + Invoices − Receipts − CreditNotes − WriteOffs`.
-/// Tally form: `AR_open + Invoices == AR_close + Receipts + CreditNotes + WriteOffs`.
-#[derive(Clone, Copy, Debug)]
+/// Tally: `AR_open + Invoices == AR_close + Receipts + CreditNotes + WriteOffs`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ArRollForward {
     /// Opening accounts-receivable balance.
-    pub ar_open: Commitment,
+    pub ar_open: u64,
     /// Invoices issued in the period.
-    pub invoices: Commitment,
+    pub invoices: u64,
     /// Closing accounts-receivable balance.
-    pub ar_close: Commitment,
-    /// Cash receipts in the period.
-    pub receipts: Commitment,
+    pub ar_close: u64,
+    /// Receipts in the period.
+    pub receipts: u64,
     /// Credit notes issued in the period.
-    pub credit_notes: Commitment,
+    pub credit_notes: u64,
     /// Receivables written off in the period.
-    pub write_offs: Commitment,
+    pub write_offs: u64,
 }
 
 impl ArRollForward {
-    /// Verify `AR_open + Invoices == AR_close + Receipts + CreditNotes + WriteOffs`.
+    /// Verify the roll-forward identity over the disclosed records.
     ///
     /// # Errors
     ///
-    /// Returns [`AccountingError::EquationDoesNotHold`] if the tally fails.
+    /// [`AccountingError::Overflow`] on `u64` overflow;
+    /// [`AccountingError::EquationDoesNotHold`] otherwise.
     pub fn verify(&self) -> Result<(), AccountingError> {
-        let positive = [self.ar_open, self.invoices];
-        let negative = [
-            self.ar_close,
-            self.receipts,
-            self.credit_notes,
-            self.write_offs,
-        ];
-        if (LinearEquation {
-            positive: &positive,
-            negative: &negative,
-        })
-        .verify()
-        {
+        let lhs = self
+            .ar_open
+            .checked_add(self.invoices)
+            .ok_or(AccountingError::Overflow)?;
+        let rhs = self
+            .ar_close
+            .checked_add(self.receipts)
+            .ok_or(AccountingError::Overflow)?
+            .checked_add(self.credit_notes)
+            .ok_or(AccountingError::Overflow)?
+            .checked_add(self.write_offs)
+            .ok_or(AccountingError::Overflow)?;
+        if lhs == rhs {
             Ok(())
         } else {
             Err(AccountingError::EquationDoesNotHold)
@@ -138,28 +135,32 @@ impl ArRollForward {
 // 3. Trial-balance: Σ Debits == Σ Credits
 // ---------------------------------------------------------------------------
 
-/// `Σ Debits == Σ Credits` over any number of debit / credit commitments.
-#[derive(Clone, Debug)]
+/// `Σ Debits == Σ Credits` over any number of debit/credit records.
+#[derive(Clone, Copy, Debug)]
 pub struct DebitsCredits<'a> {
-    /// Slice of debit commitments.
-    pub debits: &'a [Commitment],
-    /// Slice of credit commitments.
-    pub credits: &'a [Commitment],
+    /// Slice of debit amounts (minor units).
+    pub debits: &'a [u64],
+    /// Slice of credit amounts (minor units).
+    pub credits: &'a [u64],
 }
 
 impl DebitsCredits<'_> {
-    /// Verify `Σ Debits == Σ Credits`.
+    /// Verify `Σ Debits == Σ Credits` over the disclosed records.
     ///
     /// # Errors
     ///
-    /// Returns [`AccountingError::EquationDoesNotHold`] if the tally fails.
+    /// [`AccountingError::Overflow`] on `u64` overflow during summation;
+    /// [`AccountingError::EquationDoesNotHold`] if the sums differ.
     pub fn verify(&self) -> Result<(), AccountingError> {
-        if (LinearEquation {
-            positive: self.debits,
-            negative: self.credits,
-        })
-        .verify()
-        {
+        let mut lhs: u64 = 0;
+        for d in self.debits {
+            lhs = lhs.checked_add(*d).ok_or(AccountingError::Overflow)?;
+        }
+        let mut rhs: u64 = 0;
+        for c in self.credits {
+            rhs = rhs.checked_add(*c).ok_or(AccountingError::Overflow)?;
+        }
+        if lhs == rhs {
             Ok(())
         } else {
             Err(AccountingError::EquationDoesNotHold)
@@ -168,19 +169,19 @@ impl DebitsCredits<'_> {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Bank reconciliation: BookCash + ReconcilingItems = BankBalance
+// 4. Bank reconciliation
 // ---------------------------------------------------------------------------
 
-/// `BookCash + ReconcilingItems == BankBalance`.
-#[derive(Clone, Debug)]
+/// `BookCash + Σ ReconcilingItems == BankBalance`.
+#[derive(Clone, Copy, Debug)]
 pub struct BankReconciliation<'a> {
-    /// Cash on the entity's books.
-    pub book_cash: Commitment,
-    /// Reconciling items (outstanding cheques, deposits in transit, bank
-    /// errors, etc.). May be zero or many.
-    pub reconciling_items: &'a [Commitment],
-    /// Bank balance per statement.
-    pub bank_balance: Commitment,
+    /// Cash on the entity's books (minor units).
+    pub book_cash: u64,
+    /// Reconciling items (outstanding payments, deposits in transit, etc.).
+    /// May be zero or many. Minor units.
+    pub reconciling_items: &'a [u64],
+    /// Bank balance per statement (minor units).
+    pub bank_balance: u64,
 }
 
 impl BankReconciliation<'_> {
@@ -188,18 +189,14 @@ impl BankReconciliation<'_> {
     ///
     /// # Errors
     ///
-    /// Returns [`AccountingError::EquationDoesNotHold`] if the tally fails.
+    /// [`AccountingError::Overflow`] on `u64` overflow;
+    /// [`AccountingError::EquationDoesNotHold`] otherwise.
     pub fn verify(&self) -> Result<(), AccountingError> {
-        let mut positive: Vec<Commitment> = Vec::with_capacity(1 + self.reconciling_items.len());
-        positive.push(self.book_cash);
-        positive.extend_from_slice(self.reconciling_items);
-        let negative = [self.bank_balance];
-        if (LinearEquation {
-            positive: &positive,
-            negative: &negative,
-        })
-        .verify()
-        {
+        let mut lhs = self.book_cash;
+        for v in self.reconciling_items {
+            lhs = lhs.checked_add(*v).ok_or(AccountingError::Overflow)?;
+        }
+        if lhs == self.bank_balance {
             Ok(())
         } else {
             Err(AccountingError::EquationDoesNotHold)
@@ -208,36 +205,34 @@ impl BankReconciliation<'_> {
 }
 
 // ---------------------------------------------------------------------------
-// 5. VAT payable: VAT_payable = OutputVAT − InputVAT
+// 5. VAT payable
 // ---------------------------------------------------------------------------
 
-/// `VAT_payable = OutputVAT − InputVAT`. Tally form:
-/// `OutputVAT == VAT_payable + InputVAT`.
-#[derive(Clone, Copy, Debug)]
+/// `VAT_payable = OutputVAT − InputVAT`. Tally: `OutputVAT == VAT_payable + InputVAT`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VatPayable {
-    /// Output VAT (VAT charged on sales).
-    pub output_vat: Commitment,
-    /// Input VAT (VAT recoverable on purchases).
-    pub input_vat: Commitment,
+    /// Output VAT (charged on sales).
+    pub output_vat: u64,
+    /// Input VAT (recoverable on purchases).
+    pub input_vat: u64,
     /// VAT payable to the tax authority.
-    pub vat_payable: Commitment,
+    pub vat_payable: u64,
 }
 
 impl VatPayable {
-    /// Verify `OutputVAT == VAT_payable + InputVAT`.
+    /// Verify `OutputVAT == VAT_payable + InputVAT` over the disclosed records.
     ///
     /// # Errors
     ///
-    /// Returns [`AccountingError::EquationDoesNotHold`] if the tally fails.
+    /// [`AccountingError::Overflow`] on `u64` overflow;
+    /// [`AccountingError::EquationDoesNotHold`] otherwise.
     pub fn verify(&self) -> Result<(), AccountingError> {
-        let positive = [self.output_vat];
-        let negative = [self.vat_payable, self.input_vat];
-        if (LinearEquation {
-            positive: &positive,
-            negative: &negative,
-        })
-        .verify()
-        {
+        let rhs = self
+            .vat_payable
+            .checked_add(self.input_vat)
+            .ok_or(AccountingError::Overflow)?;
+        if self.output_vat == rhs {
             Ok(())
         } else {
             Err(AccountingError::EquationDoesNotHold)
@@ -248,27 +243,14 @@ impl VatPayable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vaa_commit::Blinding;
-
-    fn r(byte: u8) -> Blinding {
-        Blinding::from_bytes([byte; 32]).expect("valid scalar")
-    }
-
-    // ------- Invoice total -------
 
     #[test]
     fn invoice_total_correct() {
-        // LHS blindings (Net + Tax) sum: 5 + 2 = 7
-        // RHS blindings (Gross + Discount) sum: 4 + 3 = 7
-        let net = Commitment::commit(100_000, &r(5));
-        let tax = Commitment::commit(21_000, &r(2));
-        let discount = Commitment::commit(4_000, &r(3));
-        let gross = Commitment::commit(117_000, &r(4));
         InvoiceTotal {
-            net,
-            tax,
-            discount,
-            gross,
+            net: 100_000,
+            tax: 21_000,
+            discount: 4_000,
+            gross: 117_000,
         }
         .verify()
         .unwrap();
@@ -276,40 +258,39 @@ mod tests {
 
     #[test]
     fn invoice_total_off_by_one_gross_is_rejected() {
-        let net = Commitment::commit(100_000, &r(5));
-        let tax = Commitment::commit(21_000, &r(2));
-        let discount = Commitment::commit(4_000, &r(3));
-        let gross = Commitment::commit(117_001, &r(4)); // wrong
         let err = InvoiceTotal {
-            net,
-            tax,
-            discount,
-            gross,
+            net: 100_000,
+            tax: 21_000,
+            discount: 4_000,
+            gross: 117_001,
         }
         .verify()
         .unwrap_err();
-        assert!(matches!(err, AccountingError::EquationDoesNotHold));
+        assert_eq!(err, AccountingError::EquationDoesNotHold);
     }
 
-    // ------- AR roll-forward -------
+    #[test]
+    fn invoice_total_overflow_detected() {
+        let err = InvoiceTotal {
+            net: u64::MAX,
+            tax: 1,
+            discount: 0,
+            gross: 0,
+        }
+        .verify()
+        .unwrap_err();
+        assert_eq!(err, AccountingError::Overflow);
+    }
 
     #[test]
     fn ar_roll_forward_correct() {
-        // LHS: ar_open (10) + invoices (1) = 11
-        // RHS: ar_close (3) + receipts (4) + credit_notes (2) + write_offs (2) = 11
-        let ar_open = Commitment::commit(50_000, &r(10));
-        let invoices = Commitment::commit(60_000, &r(1));
-        let ar_close = Commitment::commit(40_000, &r(3));
-        let receipts = Commitment::commit(65_000, &r(4));
-        let credit_notes = Commitment::commit(3_000, &r(2));
-        let write_offs = Commitment::commit(2_000, &r(2));
         ArRollForward {
-            ar_open,
-            invoices,
-            ar_close,
-            receipts,
-            credit_notes,
-            write_offs,
+            ar_open: 50_000,
+            invoices: 60_000,
+            ar_close: 40_000,
+            receipts: 65_000,
+            credit_notes: 3_000,
+            write_offs: 2_000,
         }
         .verify()
         .unwrap();
@@ -317,78 +298,46 @@ mod tests {
 
     #[test]
     fn ar_roll_forward_wrong_close_is_rejected() {
-        let ar_open = Commitment::commit(50_000, &r(10));
-        let invoices = Commitment::commit(60_000, &r(1));
-        let ar_close = Commitment::commit(40_001, &r(3)); // off by one
-        let receipts = Commitment::commit(65_000, &r(4));
-        let credit_notes = Commitment::commit(3_000, &r(2));
-        let write_offs = Commitment::commit(2_000, &r(2));
         let err = ArRollForward {
-            ar_open,
-            invoices,
-            ar_close,
-            receipts,
-            credit_notes,
-            write_offs,
+            ar_open: 50_000,
+            invoices: 60_000,
+            ar_close: 40_001,
+            receipts: 65_000,
+            credit_notes: 3_000,
+            write_offs: 2_000,
         }
         .verify()
         .unwrap_err();
-        assert!(matches!(err, AccountingError::EquationDoesNotHold));
+        assert_eq!(err, AccountingError::EquationDoesNotHold);
     }
-
-    // ------- Debits == Credits -------
 
     #[test]
     fn debits_credits_tally() {
-        let debits = [
-            Commitment::commit(500, &r(1)),
-            Commitment::commit(1_500, &r(2)),
-            Commitment::commit(3_000, &r(3)),
-        ];
-        let credits = [
-            Commitment::commit(2_000, &r(2)),
-            Commitment::commit(800, &r(1)),
-            Commitment::commit(2_200, &r(3)),
-        ];
         DebitsCredits {
-            debits: &debits,
-            credits: &credits,
+            debits: &[500, 1_500, 3_000],
+            credits: &[2_000, 800, 2_200],
         }
         .verify()
         .unwrap();
     }
 
     #[test]
-    fn debits_credits_unequal_sides_rejected() {
-        let debits = [
-            Commitment::commit(500, &r(1)),
-            Commitment::commit(1_500, &r(2)),
-        ];
-        let credits = [Commitment::commit(2_001, &r(3))]; // off by one
+    fn debits_credits_unequal_rejected() {
         let err = DebitsCredits {
-            debits: &debits,
-            credits: &credits,
+            debits: &[500, 1_500],
+            credits: &[2_001],
         }
         .verify()
         .unwrap_err();
-        assert!(matches!(err, AccountingError::EquationDoesNotHold));
+        assert_eq!(err, AccountingError::EquationDoesNotHold);
     }
 
-    // ------- Bank reconciliation -------
-
     #[test]
-    fn bank_reconciliation_with_two_items() {
-        // book_cash (5) + items (2 + 3 = 5) = 10; bank_balance (10)
-        let book_cash = Commitment::commit(8_000, &r(5));
-        let items = [
-            Commitment::commit(2_000, &r(2)),
-            Commitment::commit(1_500, &r(3)),
-        ];
-        let bank_balance = Commitment::commit(11_500, &r(10));
+    fn bank_reconciliation_with_items() {
         BankReconciliation {
-            book_cash,
-            reconciling_items: &items,
-            bank_balance,
+            book_cash: 8_000,
+            reconciling_items: &[2_000, 1_500],
+            bank_balance: 11_500,
         }
         .verify()
         .unwrap();
@@ -396,29 +345,21 @@ mod tests {
 
     #[test]
     fn bank_reconciliation_with_no_items() {
-        let book_cash = Commitment::commit(10_000, &r(5));
-        let bank_balance = Commitment::commit(10_000, &r(5));
         BankReconciliation {
-            book_cash,
+            book_cash: 10_000,
             reconciling_items: &[],
-            bank_balance,
+            bank_balance: 10_000,
         }
         .verify()
         .unwrap();
     }
 
-    // ------- VAT -------
-
     #[test]
     fn vat_payable_correct() {
-        // output (10) == payable (7) + input (3)
-        let output_vat = Commitment::commit(20_000, &r(10));
-        let input_vat = Commitment::commit(7_500, &r(3));
-        let vat_payable = Commitment::commit(12_500, &r(7));
         VatPayable {
-            output_vat,
-            input_vat,
-            vat_payable,
+            output_vat: 20_000,
+            input_vat: 7_500,
+            vat_payable: 12_500,
         }
         .verify()
         .unwrap();
@@ -426,16 +367,13 @@ mod tests {
 
     #[test]
     fn vat_payable_off_by_one_rejected() {
-        let output_vat = Commitment::commit(20_000, &r(10));
-        let input_vat = Commitment::commit(7_500, &r(3));
-        let vat_payable = Commitment::commit(12_501, &r(7)); // off
         let err = VatPayable {
-            output_vat,
-            input_vat,
-            vat_payable,
+            output_vat: 20_000,
+            input_vat: 7_500,
+            vat_payable: 12_501,
         }
         .verify()
         .unwrap_err();
-        assert!(matches!(err, AccountingError::EquationDoesNotHold));
+        assert_eq!(err, AccountingError::EquationDoesNotHold);
     }
 }

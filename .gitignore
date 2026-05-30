@@ -1,8 +1,12 @@
-/target
-**/*.rs.bk
-
-# Per-machine cargo config (linker paths and similar are user-specific).
-.cargo/
+# Node / TypeScript
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.npm
+.yarn-cache/
+.pnpm-store/
 
 # Editor / OS
 .vscode/
@@ -14,17 +18,14 @@ Thumbs.db
 # Local environment
 .env
 .env.local
-
-# Python helpers (if any benchmarks/repro scripts use Python)
-__pycache__/
-*.pyc
-.venv/
-venv/
-
-# Criterion benchmark output
-target/criterion/
+.env.*.local
 
 # Local secrets / keys — never commit (see SECURITY.md).
 *.pem
 *.key
 secrets/
+
+# Per-machine cargo config.
+.cargo/
+/target
+**/*.rs.bk

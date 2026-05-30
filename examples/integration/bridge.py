@@ -2,37 +2,28 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Craig Wright
 
-"""Runnable integration bridge for the two sister repositories.
+"""Runnable integration bridge for the two BSV-native accounting flows.
 
 Demonstrates two end-to-end flows that use the `vaa` CLI as the BSV-anchoring
-+ Merkle + Pedersen layer underneath:
++ Merkle Proof Entity + selective-verification layer underneath:
 
-    1. triple-entry-evidence  ->  vaa
-       Take a batch of TEA-style note bodies, hash each to a leaf, build the
-       Merkle root via `vaa anchor`, then produce + verify a proof bundle for
-       one note via `vaa prove` + `vaa verify`.
+    1. anchor-records      Hash a batch of accounting records, build the
+                           BSV-canonical Merkle root via `vaa anchor`,
+                           produce + verify a proof bundle for one chosen
+                           record via `vaa prove` + `vaa verify`.
 
-    2. bonded-subsat-channel  ->  vaa
-       Take an ordered list of BSV txids for a block that contains a channel
-       settlement transaction, build the BSV-canonical Merkle root via
-       `vaa anchor`, and verify the published header's `merkleroot` matches.
+    2. verify-bsv-block <h> Fetch a BSV mainnet block at height <h>, feed
+                           the canonical tx-ordered txid list to `vaa anchor`,
+                           and assert the computed Merkle root matches the
+                           published header merkleroot.
 
-Both flows are self-contained: they shell out to the `vaa` binary and parse
-its stdout / written JSON files. No native Rust binding is required; the
-sister repositories stay independent of this workspace's language choice.
+    3. from-settlement     Take a settlement-ledger JSON record, fetch its
+                           BSV block, verify the block tx list reconstructs
+                           to the header merkleroot, and produce an
+                           inclusion proof bundle for the settlement txid.
 
-USAGE
-    python bridge.py demo-tea
-    python bridge.py demo-channel <block-height>
-
-The TEA demo uses synthetic note bodies (so the script runs offline). The
-channel demo fetches block data live from the WhatsOnChain BSV API (default
-endpoint, override with --api=<url>).
-
-REQUIREMENTS
-    - python 3.10+
-    - the `vaa` binary on PATH (or pass --vaa=<path>)
-    - for `demo-channel`: outbound HTTPS to the BSV API
+The script is self-contained: it does not require any external library
+beyond the Python standard library and the `vaa` binary on PATH (or $VAA).
 """
 
 from __future__ import annotations
@@ -56,17 +47,14 @@ def double_sha256(b: bytes) -> bytes:
 
 
 def to_display_be(internal_le: bytes) -> str:
-    """Convert internal little-endian Bitcoin/BSV bytes to display big-endian hex."""
     return internal_le[::-1].hex()
 
 
 def from_display_be(display_be_hex: str) -> bytes:
-    """Convert display big-endian hex to internal little-endian bytes."""
     return bytes.fromhex(display_be_hex.strip())[::-1]
 
 
 def run_vaa(vaa: str, args: list[str], cwd: Path | None = None) -> str:
-    """Invoke the vaa CLI and return its stdout. Raises on non-zero exit."""
     proc = subprocess.run(
         [vaa, *args], capture_output=True, text=True, cwd=cwd, check=False
     )
@@ -78,88 +66,93 @@ def run_vaa(vaa: str, args: list[str], cwd: Path | None = None) -> str:
 
 
 # --------------------------------------------------------------------------
-# demo-tea: triple-entry-evidence -> vaa
+# anchor-records: synthetic accounting records -> vaa anchor + prove + verify
 # --------------------------------------------------------------------------
 
 
-def synthetic_tea_notes(n: int) -> list[bytes]:
-    """Produce n deterministic synthetic TEA note bodies.
+def synthetic_records(n: int) -> list[bytes]:
+    """n deterministic synthetic accounting record bodies.
 
-    A real bridge would parse the JSON output of triple-entry-evidence's
-    refimpl.py and extract the canonical serialised note bodies. Here we
-    use a deterministic stand-in so the script runs without that repo
-    installed: each note is `b"TEA-note-{i}"` padded to a stable length.
+    A real bridge would parse the integrating system's record format. Here
+    we use a deterministic stand-in so the script runs offline: each record
+    is a canonical JSON object with a sequential id and a stable structure.
     """
-    return [(f"TEA-note-body-{i:05d}").encode("ascii").ljust(64, b"\x00") for i in range(n)]
+    out: list[bytes] = []
+    for i in range(n):
+        obj = {
+            "kind": "invoice" if i % 2 == 0 else "receipt",
+            "id": i,
+            "value": 1_000_000 + (i * 137) % 9_000_000,
+            "counterparty": f"counterparty-{i % 12:02d}",
+        }
+        out.append(
+            json.dumps(obj, separators=(",", ":"), sort_keys=True).encode("ascii")
+        )
+    return out
 
 
-def cmd_demo_tea(args: argparse.Namespace) -> int:
-    notes = synthetic_tea_notes(args.notes)
-    # Step 1 — hash each note to a leaf (display BE form for vaa).
-    leaves_display_be = [to_display_be(double_sha256(n)) for n in notes]
-    print(f"TEA bridge: {len(notes)} notes hashed to leaves")
+def cmd_anchor_records(args: argparse.Namespace) -> int:
+    records = synthetic_records(args.records_count)
+    workdir = Path(tempfile.mkdtemp(prefix="vaa-rec-"))
 
-    workdir = Path(tempfile.mkdtemp(prefix="vaa-tea-"))
+    records_path = workdir / "records.json"
+    records_path.write_text(
+        json.dumps({"records_hex": [r.hex() for r in records]}, indent=2)
+    )
+    print(f"records bridge: {len(records)} records → {records_path}")
+
+    out = run_vaa(args.vaa, ["anchor", "--leaves", str(workdir / "leaves.json")]) if False else ""
+    # `vaa anchor` reads leaves JSON, not records JSON. Build the leaves
+    # JSON from the records first.
     leaves_path = workdir / "leaves.json"
-    leaves_path.write_text(json.dumps({"leaves_display_be": leaves_display_be}, indent=2))
-    print(f"  wrote {leaves_path}")
-
-    # Step 2 — anchor (build the root via vaa).
+    leaves = [double_sha256(r) for r in records]
+    leaves_path.write_text(
+        json.dumps({"leaves_display_be": [to_display_be(h) for h in leaves]}, indent=2)
+    )
     out = run_vaa(args.vaa, ["anchor", "--leaves", str(leaves_path)])
     print("--- vaa anchor ---")
     print(out.rstrip())
 
-    # Step 3 — prove inclusion of a chosen note + commit a value.
-    chosen_index = args.index
-    if chosen_index >= len(notes):
-        raise SystemExit(f"--index {chosen_index} out of range for {len(notes)} notes")
-    value = args.value
-    blinding = secrets.token_bytes(32)
-    # Reject zero blinding (vanishingly unlikely from token_bytes but the
-    # contract is explicit).
-    while blinding == b"\x00" * 32:
-        blinding = secrets.token_bytes(32)
+    chosen = args.index
+    if chosen >= len(records):
+        raise SystemExit(f"--index {chosen} out of range for {len(records)} records")
     bundle_path = workdir / "bundle.json"
     run_vaa(
         args.vaa,
         [
             "prove",
-            "--leaves", str(leaves_path),
-            "--index", str(chosen_index),
-            "--value", str(value),
-            "--blinding-hex", blinding.hex(),
+            "--records", str(records_path),
+            "--index", str(chosen),
             "--out", str(bundle_path),
         ],
     )
-    print(f"--- vaa prove ---")
-    print(f"  wrote {bundle_path} (value={value}, leaf #{chosen_index})")
+    print(f"--- vaa prove ---  wrote {bundle_path}")
 
-    # Step 4 — verify the bundle.
     out = run_vaa(args.vaa, ["verify", "--bundle", str(bundle_path)])
     print("--- vaa verify ---")
     print(out.rstrip())
 
     print()
-    print(f"TEA bridge demo OK. Working files preserved in {workdir}")
+    print(f"anchor-records demo OK. Working files preserved in {workdir}")
     return 0
 
 
 # --------------------------------------------------------------------------
-# demo-channel: bonded-subsat-channel -> vaa
+# verify-bsv-block: live BSV mainnet block merkleroot check
 # --------------------------------------------------------------------------
 
 
 def fetch_bsv_block(api: str, height: int) -> dict:
     """Fetch the block header + tx list for a BSV mainnet block by height.
 
-    Uses the WhatsOnChain BSV API by default. The script sends a project
-    User-Agent so the API does not treat it as an unknown bot.
+    Uses a public BSV explorer endpoint. Sends a project User-Agent so the
+    endpoint does not treat the request as an unknown bot.
     """
     url = f"{api.rstrip('/')}/v1/bsv/main/block/height/{height}"
     req = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "verifiable-accounting/0.2.0 (+github.com/prof-faustus/verifiable-accounting) bridge.py",
+            "User-Agent": "verifiable-accounting/0.3.0 (+bsv) bridge.py",
             "Accept": "application/json",
         },
     )
@@ -172,21 +165,21 @@ def fetch_bsv_block(api: str, height: int) -> dict:
         raise SystemExit(f"BSV API unreachable ({url}): {e.reason}")
 
 
-def cmd_demo_channel(args: argparse.Namespace) -> int:
-    print(f"channel bridge: fetching BSV mainnet block height {args.height} from {args.api}")
+def cmd_verify_bsv_block(args: argparse.Namespace) -> int:
+    print(f"BSV block verify: fetching BSV mainnet block height {args.height} from {args.api}")
     block = fetch_bsv_block(args.api, args.height)
     txids: list[str] = block.get("tx") or []
     merkleroot: str = block["merkleroot"]
-    print(f"  block hash    : {block['hash']}")
-    print(f"  merkleroot    : {merkleroot}")
-    print(f"  tx count      : {len(txids)}")
+    print(f"  block hash : {block['hash']}")
+    print(f"  merkleroot : {merkleroot}")
+    print(f"  tx count   : {len(txids)}")
     if not txids:
         raise SystemExit(
-            "The API returned no tx list (block may be pruned for the public endpoint). "
+            "BSV API returned no tx list (this block may be pruned at the public endpoint). "
             "Try a different height or a non-pruned endpoint."
         )
 
-    workdir = Path(tempfile.mkdtemp(prefix="vaa-chan-"))
+    workdir = Path(tempfile.mkdtemp(prefix="vaa-block-"))
     leaves_path = workdir / "leaves.json"
     leaves_path.write_text(json.dumps({"leaves_display_be": txids}, indent=2))
     print(f"  wrote {leaves_path}")
@@ -195,12 +188,11 @@ def cmd_demo_channel(args: argparse.Namespace) -> int:
     print("--- vaa anchor ---")
     print(out.rstrip())
 
-    # Extract the computed root (display form) from `vaa anchor` output.
     computed_root: str | None = None
     for line in out.splitlines():
-        line = line.strip()
-        if line.startswith("root (display):"):
-            computed_root = line.split(":", 1)[1].strip()
+        s = line.strip()
+        if s.startswith("root (display)"):
+            computed_root = s.split(":", 1)[1].strip()
             break
     if computed_root is None:
         raise SystemExit("could not parse computed root from `vaa anchor` output")
@@ -215,34 +207,30 @@ def cmd_demo_channel(args: argparse.Namespace) -> int:
         )
     print()
     print(
-        f"channel bridge OK: vaa-computed root == published header merkleroot for block {args.height}"
+        f"BSV block verify OK: vaa-computed root == published header merkleroot for block {args.height}"
     )
     print(f"  working files preserved in {workdir}")
     return 0
 
 
 # --------------------------------------------------------------------------
-# from-channel-ledger: ingest a real bonded-subsat-channel JSON record
+# from-settlement: ingest a settlement-ledger JSON
 # --------------------------------------------------------------------------
 
 
-CHANNEL_LEDGER_SCHEMA = """
+SETTLEMENT_LEDGER_SCHEMA = """
 A JSON object with at minimum:
 
   {
-    "channel_id": "<string>",
+    "settlement_id": "<string>",
     "settlement_txid_display_be": "<64-char big-endian hex>",
     "parties": ["<party>", ...],            // optional, informational
-    "final_balances_q": { ... }             // optional, informational
+    "balances_minor_units": { ... }         // optional, informational
   }
-
-The settlement_txid_display_be field is the on-chain settlement transaction
-id emitted by `channel close` / `channel contested`. Everything else is
-informational and not required by the bridge.
 """
 
 
-def cmd_from_channel_ledger(args: argparse.Namespace) -> int:
+def cmd_from_settlement(args: argparse.Namespace) -> int:
     try:
         ledger = json.loads(args.ledger.read_text())
     except (OSError, json.JSONDecodeError) as e:
@@ -250,14 +238,14 @@ def cmd_from_channel_ledger(args: argparse.Namespace) -> int:
     txid = ledger.get("settlement_txid_display_be")
     if not isinstance(txid, str) or len(txid) != 64:
         raise SystemExit(
-            "channel ledger is missing 'settlement_txid_display_be' (a 64-char "
-            "big-endian hex string).\n\nExpected schema:" + CHANNEL_LEDGER_SCHEMA
+            "ledger is missing 'settlement_txid_display_be' (a 64-char big-endian hex string).\n\n"
+            + "Expected schema:" + SETTLEMENT_LEDGER_SCHEMA
         )
 
-    print(f"channel ledger: {args.ledger}")
-    print(f"  channel_id     : {ledger.get('channel_id', '(unset)')}")
-    print(f"  settlement txid: {txid}")
-    print(f"  block height   : {args.bsv_block_height}")
+    print(f"settlement ledger : {args.ledger}")
+    print(f"  settlement_id    : {ledger.get('settlement_id', '(unset)')}")
+    print(f"  settlement txid  : {txid}")
+    print(f"  bsv block height : {args.bsv_block_height}")
 
     block = fetch_bsv_block(args.api, args.bsv_block_height)
     txids = block.get("tx") or []
@@ -266,12 +254,12 @@ def cmd_from_channel_ledger(args: argparse.Namespace) -> int:
     if txid not in txids:
         raise SystemExit(
             f"settlement txid {txid} not found in block {args.bsv_block_height} "
-            f"({len(txids)} txs). The channel ledger's block_height may be wrong."
+            f"({len(txids)} txs). The ledger's block_height may be wrong."
         )
     leaf_index = txids.index(txid)
-    print(f"  found at index : {leaf_index} (of {len(txids)})")
+    print(f"  found at index   : {leaf_index} of {len(txids)}")
 
-    workdir = Path(tempfile.mkdtemp(prefix="vaa-chl-"))
+    workdir = Path(tempfile.mkdtemp(prefix="vaa-set-"))
     leaves_path = workdir / "leaves.json"
     leaves_path.write_text(json.dumps({"leaves_display_be": txids}, indent=2))
 
@@ -279,33 +267,31 @@ def cmd_from_channel_ledger(args: argparse.Namespace) -> int:
     print("--- vaa anchor ---")
     print(out.rstrip())
 
-    # Confirm root matches block header so the verifier knows the leaf list is canonical.
     computed_root: str | None = None
     for line in out.splitlines():
-        if line.strip().startswith("root (display):"):
-            computed_root = line.split(":", 1)[1].strip()
+        s = line.strip()
+        if s.startswith("root (display)"):
+            computed_root = s.split(":", 1)[1].strip()
             break
     if computed_root != block["merkleroot"]:
         raise SystemExit(
-            f"merkleroot mismatch (block tx list does not reconstruct to header root):\n"
+            f"merkleroot mismatch:\n"
             f"  computed : {computed_root}\n  header   : {block['merkleroot']}"
         )
     print(f"  header check OK (computed root == block {args.bsv_block_height} merkleroot)")
 
-    # Produce a real inclusion proof bundle for the settlement tx.
+    # Build a records.json for the txid (record = the raw txid bytes).
+    records_path = workdir / "records.json"
+    records_path.write_text(
+        json.dumps({"records_hex": [t for t in txids]}, indent=2)
+    )
     bundle_path = workdir / "settlement_inclusion.json"
-    # The value/blinding fields are placeholders for inclusion-only mode.
-    placeholder_blinding = secrets.token_bytes(32)
-    while placeholder_blinding == b"\x00" * 32:
-        placeholder_blinding = secrets.token_bytes(32)
     run_vaa(
         args.vaa,
         [
             "prove",
-            "--leaves", str(leaves_path),
+            "--records", str(records_path),
             "--index", str(leaf_index),
-            "--value", "0",
-            "--blinding-hex", placeholder_blinding.hex(),
             "--out", str(bundle_path),
         ],
     )
@@ -317,7 +303,7 @@ def cmd_from_channel_ledger(args: argparse.Namespace) -> int:
 
     print()
     print(
-        f"channel-ledger -> vaa OK. Settlement tx is provably included in BSV block "
+        f"settlement-ledger → vaa OK. Settlement txid is provably included in BSV block "
         f"{args.bsv_block_height} at index {leaf_index}."
     )
     return 0
@@ -329,7 +315,9 @@ def cmd_from_channel_ledger(args: argparse.Namespace) -> int:
 
 
 def main(argv: Iterable[str]) -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "--vaa",
         default=os.environ.get("VAA", "vaa"),
@@ -337,32 +325,42 @@ def main(argv: Iterable[str]) -> int:
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_tea = sub.add_parser("demo-tea", help="triple-entry-evidence -> vaa anchoring round-trip")
-    p_tea.add_argument("--notes", type=int, default=16, help="number of synthetic notes (default 16)")
-    p_tea.add_argument("--index", type=int, default=3, help="leaf index to prove (default 3)")
-    p_tea.add_argument("--value", type=int, default=12100, help="value to commit in the bundle (default 12100)")
-    p_tea.set_defaults(func=cmd_demo_tea)
-
-    p_chan = sub.add_parser(
-        "demo-channel", help="bonded-subsat-channel -> vaa block-merkle verification"
+    p_rec = sub.add_parser(
+        "anchor-records", help="anchor a batch of synthetic accounting records and verify one"
     )
-    p_chan.add_argument("height", type=int, help="BSV mainnet block height to verify")
-    p_chan.add_argument(
+    p_rec.add_argument(
+        "--records-count", type=int, default=16, help="number of synthetic records (default 16)"
+    )
+    p_rec.add_argument("--index", type=int, default=3, help="record index to prove (default 3)")
+    p_rec.set_defaults(func=cmd_anchor_records)
+
+    p_blk = sub.add_parser(
+        "verify-bsv-block",
+        help="fetch a BSV mainnet block and verify its merkleroot is reconstructed from the canonical tx list",
+    )
+    p_blk.add_argument("height", type=int, help="BSV mainnet block height to verify")
+    p_blk.add_argument(
         "--api",
         default="https://api.whatsonchain.com",
-        help="BSV REST API base URL (default: WhatsOnChain). Override for a private/pruned endpoint.",
+        help="BSV REST API base URL (default: a public BSV explorer)",
     )
-    p_chan.set_defaults(func=cmd_demo_channel)
+    p_blk.set_defaults(func=cmd_verify_bsv_block)
 
-    p_fcl = sub.add_parser(
-        "from-channel-ledger",
-        help="Take a bonded-subsat-channel JSON ledger and produce a vaa inclusion proof for its settlement tx",
+    p_set = sub.add_parser(
+        "from-settlement",
+        help="ingest a settlement-ledger JSON and produce an inclusion proof for its settlement txid",
     )
-    p_fcl.add_argument("ledger", type=Path, help="Path to the channel-ledger JSON (see schema in docstring)")
-    p_fcl.add_argument("--bsv-block-height", type=int, required=True,
-                       help="Block height the settlement landed in (used to fetch the canonical tx list)")
-    p_fcl.add_argument("--api", default="https://api.whatsonchain.com")
-    p_fcl.set_defaults(func=cmd_from_channel_ledger)
+    p_set.add_argument("ledger", type=Path, help="path to the settlement-ledger JSON")
+    p_set.add_argument(
+        "--bsv-block-height", type=int, required=True,
+        help="BSV mainnet block height the settlement landed in",
+    )
+    p_set.add_argument(
+        "--api",
+        default="https://api.whatsonchain.com",
+        help="BSV REST API base URL (default: a public BSV explorer)",
+    )
+    p_set.set_defaults(func=cmd_from_settlement)
 
     args = parser.parse_args(list(argv))
     return args.func(args)

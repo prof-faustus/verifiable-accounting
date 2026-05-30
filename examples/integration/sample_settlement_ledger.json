@@ -1,0 +1,12 @@
+{
+  "_comment": "Representative settlement-ledger record. The settlement_txid_display_be is an on-chain BSV txid whose inclusion the auditor wants to verify. For this example we use a txid known to be in a real public BSV mainnet block so the bridge runs against genuine data without needing a private deployment.",
+  "settlement_id": "settlement-0001",
+  "parties": ["counterparty_a", "counterparty_b"],
+  "units": "minor_units",
+  "bond_minor_units_per_party": 1,
+  "settlement_txid_display_be": "f4184fc596403b9d638783cf57adfe4c75c605f6356fbc91338530e9831e9e16",
+  "balances_minor_units": {
+    "counterparty_a": 4990000000,
+    "counterparty_b": 10000000000
+  }
+}
